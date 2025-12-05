@@ -1,0 +1,16 @@
+{
+  "name": "Sodoku Stake",
+  "short_name": "Sodoku Stake",
+  "description": "Daily Sudoku with Real Stakes - Win USDC by solving puzzles",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#FAF7F2",
+  "theme_color": "#2563eb",
+  "icons": [
+    {
+      "src": "/favicon.ico",
+      "sizes": "64x64",
+      "type": "image/x-icon"
+    }
+  ]
+}

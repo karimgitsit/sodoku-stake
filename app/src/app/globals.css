@@ -1,0 +1,288 @@
+@import "tailwindcss";
+
+:root {
+  --background: #FAF7F2;
+  --foreground: #1a1a1a;
+  --primary: #2563eb;
+  --primary-dark: #1d4ed8;
+  --secondary: #f1ebe4;
+  --accent: #dc2626;
+  --success: #16a34a;
+  --warning: #d97706;
+  --card: #ffffff;
+  --card-hover: #f8f5f0;
+  --border: #e5e0d8;
+  --muted: #6b7280;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-primary: var(--primary);
+  --color-primary-dark: var(--primary-dark);
+  --color-secondary: var(--secondary);
+  --color-accent: var(--accent);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+  --color-card: var(--card);
+  --color-card-hover: var(--card-hover);
+  --color-border: var(--border);
+  --color-muted: var(--muted);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+/* iOS Scroll Bounce Prevention - per World App Guidelines */
+html, body {
+  width: 100%;
+  height: 100%;
+  overscroll-behavior: none;
+  -webkit-overflow-scrolling: touch;
+  overflow: hidden;
+}
+
+body {
+  background: #f5f0e8;
+  background-image: 
+    radial-gradient(ellipse at 20% 30%, rgba(37, 99, 235, 0.04) 0%, transparent 50%),
+    radial-gradient(ellipse at 80% 70%, rgba(22, 163, 74, 0.03) 0%, transparent 50%);
+  color: var(--foreground);
+  font-family: var(--font-sans), system-ui, sans-serif;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  min-height: 100vh;
+  padding: 16px;
+}
+
+@media (max-width: 430px) {
+  body {
+    background: var(--background);
+    padding: 0;
+  }
+}
+
+/* Mobile device frame */
+.mobile-frame {
+  width: 100%;
+  max-width: 390px;
+  height: 100%;
+  max-height: 844px;
+  background: var(--background);
+  border-radius: 40px;
+  overflow: hidden;
+  box-shadow: 
+    0 0 0 12px #e8e3db,
+    0 0 0 14px #d4cfc7,
+    0 25px 50px -12px rgba(0, 0, 0, 0.15),
+    0 0 100px rgba(37, 99, 235, 0.08);
+  position: relative;
+}
+
+@media (max-width: 430px) {
+  .mobile-frame {
+    max-width: 100%;
+    max-height: 100%;
+    border-radius: 0;
+    box-shadow: none;
+  }
+}
+
+/* Notch simulation for desktop preview */
+.mobile-frame::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 120px;
+  height: 28px;
+  background: #1a1a1a;
+  border-radius: 0 0 20px 20px;
+  z-index: 100;
+}
+
+@media (max-width: 430px) {
+  .mobile-frame::before {
+    display: none;
+  }
+}
+
+/* Main app container */
+#app-container {
+  height: 100%;
+  width: 100%;
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: none;
+}
+
+/* Sudoku Grid Styles */
+.sudoku-grid {
+  display: grid;
+  grid-template-columns: repeat(9, 1fr);
+  gap: 1px;
+  background: var(--border);
+  border: 2px solid var(--primary);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.sudoku-cell {
+  aspect-ratio: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--card);
+  font-size: 1.25rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  user-select: none;
+  color: var(--foreground);
+}
+
+.sudoku-cell:hover {
+  background: var(--card-hover);
+}
+
+.sudoku-cell.selected {
+  background: var(--primary);
+  color: white;
+}
+
+.sudoku-cell.given {
+  color: var(--muted);
+  font-weight: 500;
+  cursor: default;
+}
+
+.sudoku-cell.given:hover {
+  background: var(--card);
+}
+
+.sudoku-cell.error {
+  background: rgba(220, 38, 38, 0.15);
+  color: var(--accent);
+}
+
+.sudoku-cell.notes {
+  font-size: 0.5rem;
+  flex-wrap: wrap;
+  padding: 2px;
+  color: var(--muted);
+}
+
+/* 3x3 Box Borders */
+.sudoku-cell:nth-child(3n) {
+  border-right: 2px solid var(--primary);
+}
+
+.sudoku-cell:nth-child(9n) {
+  border-right: none;
+}
+
+.sudoku-cell:nth-child(n+19):nth-child(-n+27),
+.sudoku-cell:nth-child(n+46):nth-child(-n+54) {
+  border-bottom: 2px solid var(--primary);
+}
+
+/* Number Pad */
+.number-pad {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 8px;
+}
+
+.number-btn {
+  aspect-ratio: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  font-size: 1.5rem;
+  font-weight: 600;
+  color: var(--foreground);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.number-btn:hover {
+  background: var(--card-hover);
+  border-color: var(--primary);
+}
+
+.number-btn:active {
+  transform: scale(0.95);
+  background: var(--primary);
+  color: white;
+}
+
+/* Animations */
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+@keyframes celebrate {
+  0% { transform: scale(1); }
+  50% { transform: scale(1.1); }
+  100% { transform: scale(1); }
+}
+
+.animate-pulse {
+  animation: pulse 2s infinite;
+}
+
+.animate-celebrate {
+  animation: celebrate 0.5s ease-in-out;
+}
+
+/* Bottom Navigation */
+.bottom-nav {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  background: var(--card);
+  border-top: 1px solid var(--border);
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+.nav-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 8px 0;
+  color: var(--muted);
+  transition: color 0.15s ease;
+}
+
+.nav-item.active {
+  color: var(--primary);
+}
+
+/* Streak Badge */
+.streak-badge {
+  background: linear-gradient(135deg, #f97316, #eab308);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+/* Button variants for light theme */
+.btn-primary {
+  background: var(--primary);
+  color: white;
+}
+
+.btn-primary:hover {
+  background: var(--primary-dark);
+}
+
+/* Card shadows for depth on light background */
+.card-shadow {
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08), 0 1px 2px rgba(0, 0, 0, 0.06);
+}
