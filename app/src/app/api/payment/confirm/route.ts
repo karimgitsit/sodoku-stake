@@ -57,8 +57,8 @@ async function verifyTransactionWithWorldcoin(transactionId: string): Promise<{
         status: 'mined',
         chain: 'worldchain',
         network: 'mainnet',
-        from_address: '0x...',
-        to_address: '0x...',
+        from_address: '0xDevMockWallet1234567890abcdef1234567890ab',
+        to_address: '0x0000000000000000000000000000000000000000',
         token_amount: '1000000',
         token: 'USDC',
         created_at: new Date().toISOString(),
@@ -182,11 +182,18 @@ export async function POST(request: NextRequest) {
       transactionId: transaction_id,
     });
 
+    // Get the wallet address from the verified transaction (from_address is the sender)
+    const walletAddressFromTx = verification.transaction?.from_address;
+    
+    if (walletAddressFromTx) {
+      console.log(`[Payment] Wallet address from transaction: ${walletAddressFromTx}`);
+    }
+
     // Process based on payment type
     if (paymentRef.type === 'entry') {
-      return await handleEntryPayment(paymentRef, transaction_id);
+      return await handleEntryPayment(paymentRef, transaction_id, walletAddressFromTx);
     } else {
-      return await handleRevealPayment(paymentRef, transaction_id);
+      return await handleRevealPayment(paymentRef, transaction_id, walletAddressFromTx);
     }
 
   } catch (error) {
@@ -208,9 +215,12 @@ async function handleEntryPayment(
     username?: string;
     walletAddress?: string;
   },
-  transactionId: string
+  transactionId: string,
+  walletAddressFromTx?: string
 ) {
-  const { userId, puzzleDate, username, walletAddress } = paymentRef;
+  const { userId, puzzleDate, username } = paymentRef;
+  // Prefer wallet address from transaction (more reliable) over MiniKit
+  const walletAddress = walletAddressFromTx || paymentRef.walletAddress;
   const today = getTodayDate();
 
   // Get or create user (with wallet address from MiniKit)
@@ -276,9 +286,12 @@ async function handleRevealPayment(
     username?: string;
     walletAddress?: string;
   },
-  transactionId: string
+  transactionId: string,
+  walletAddressFromTx?: string
 ) {
-  const { userId, puzzleDate, cellPosition, username, walletAddress } = paymentRef;
+  const { userId, puzzleDate, cellPosition, username } = paymentRef;
+  // Prefer wallet address from transaction (more reliable) over MiniKit
+  const walletAddress = walletAddressFromTx || paymentRef.walletAddress;
 
   if (!cellPosition) {
     return NextResponse.json(
