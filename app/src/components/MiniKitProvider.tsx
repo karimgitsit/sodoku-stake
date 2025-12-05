@@ -29,7 +29,9 @@ export function MiniKitProvider({ children }: MiniKitProviderProps) {
         
         // Get user info if available
         if (isInstalled && MiniKit.user) {
-          console.log('[MiniKit] User:', MiniKit.user.username);
+          console.log('[MiniKit] User object:', JSON.stringify(MiniKit.user, null, 2));
+          console.log('[MiniKit] Username:', MiniKit.user.username);
+          console.log('[MiniKit] Wallet:', MiniKit.user.walletAddress);
         }
       } catch (error) {
         console.error('[MiniKit] Initialization error:', error);

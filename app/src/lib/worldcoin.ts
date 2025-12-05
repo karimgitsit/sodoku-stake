@@ -510,15 +510,39 @@ export function formatUSDC(amountInSmallestUnit: string): string {
 
 /**
  * Get user info from MiniKit (if available)
+ * Tries multiple property names for wallet address due to API variations
  */
 export function getUserInfo(): { username?: string; walletAddress?: string } | null {
   if (!MiniKit.isInstalled()) {
+    console.log('[MiniKit] Not installed, cannot get user info');
     return null;
   }
   
   const user = MiniKit.user;
-  return user ? {
+  if (!user) {
+    console.log('[MiniKit] No user object available');
+    return null;
+  }
+  
+  // Try different property names for wallet address
+  // MiniKit API may use walletAddress, wallet_address, or address
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const userAny = user as any;
+  const walletAddress = 
+    user.walletAddress || 
+    userAny.wallet_address || 
+    userAny.address ||
+    userAny.wallet ||
+    null;
+  
+  console.log('[MiniKit] User info:', {
     username: user.username,
-    walletAddress: user.walletAddress,
-  } : null;
+    walletAddress: walletAddress ? `${walletAddress.substring(0, 10)}...` : 'null',
+    rawUserKeys: Object.keys(userAny),
+  });
+  
+  return {
+    username: user.username,
+    walletAddress: walletAddress,
+  };
 }

@@ -137,9 +137,12 @@ body {
   font-size: 1.25rem;
   font-weight: 600;
   cursor: pointer;
-  transition: all 0.15s ease;
+  transition: background-color 0.15s ease, color 0.15s ease;
   user-select: none;
   color: var(--foreground);
+  overflow: hidden;
+  position: relative;
+  box-sizing: border-box;
 }
 
 .sudoku-cell:hover {
@@ -166,12 +169,7 @@ body {
   color: var(--accent);
 }
 
-.sudoku-cell.notes {
-  font-size: 0.5rem;
-  flex-wrap: wrap;
-  padding: 2px;
-  color: var(--muted);
-}
+/* Notes styling is handled by the inner grid component, not via CSS class */
 
 /* 3x3 Box Borders */
 .sudoku-cell:nth-child(3n) {

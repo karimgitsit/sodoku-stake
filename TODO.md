@@ -265,28 +265,24 @@ Implement World App push notifications for user retention.
 
 Deploy the app to Vercel and set up production database.
 
-#### A. Deploy to Vercel
-- [ ] Push code to GitHub
-- [ ] Go to https://vercel.com and connect repo
-- [ ] Add ALL environment variables in Vercel dashboard:
+#### A. Deploy to Vercel ✅
+- [x] Push code to GitHub
+- [x] Go to https://vercel.com and connect repo
+- [x] Add ALL environment variables in Vercel dashboard:
   - World App credentials
   - Supabase credentials
   - Payout wallet credentials (from Phase 4)
   - Set `NODE_ENV=production`
-- [ ] Deploy and note your production URL
+- [x] Deploy and note your production URL: https://sodoku-stake.vercel.app/
 
-#### B. Production Database
-- [ ] Create a SEPARATE Supabase project for production
-- [ ] Run `schema.sql` in production project
-- [ ] Run the wallet_address migration:
-  ```sql
-  ALTER TABLE users ADD COLUMN wallet_address TEXT;
-  ```
-- [ ] Update Vercel env vars with production Supabase credentials
+#### B. Production Database ✅
+- [x] Using existing Supabase project (same as development)
+- [x] Schema already in place
+- [x] Notification tables set up (via `001_add_notifications.sql`)
 
-#### C. Fund Production Payout Wallet
-- [ ] Transfer USDC to your payout wallet on **World Chain**
-- [ ] Ensure enough balance for first week of prizes
+#### C. Fund Production Payout Wallet ✅
+- [x] Transfer USDC to your payout wallet on **World Chain** (6 USDC for testing)
+- [x] Can add more as needed before launch
 
 #### D. Verify Production
 - [ ] Visit production URL
