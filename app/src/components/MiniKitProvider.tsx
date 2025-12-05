@@ -28,10 +28,11 @@ export function MiniKitProvider({ children }: MiniKitProviderProps) {
         }
         
         // Get user info if available
-        if (isInstalled && MiniKit.user) {
-          console.log('[MiniKit] User object:', JSON.stringify(MiniKit.user, null, 2));
-          console.log('[MiniKit] Username:', MiniKit.user.username);
-          console.log('[MiniKit] Wallet:', MiniKit.user.walletAddress);
+        if (isInstalled) {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const minikit = MiniKit as any;
+          console.log('[MiniKit] Username:', MiniKit.user?.username);
+          console.log('[MiniKit] Wallet (from MiniKit.walletAddress):', minikit.walletAddress);
         }
       } catch (error) {
         console.error('[MiniKit] Initialization error:', error);

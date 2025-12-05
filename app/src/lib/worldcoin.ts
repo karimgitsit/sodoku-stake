@@ -510,7 +510,10 @@ export function formatUSDC(amountInSmallestUnit: string): string {
 
 /**
  * Get user info from MiniKit (if available)
- * Tries multiple property names for wallet address due to API variations
+ * 
+ * Per World App docs: https://docs.world.org/mini-apps/commands/wallet-auth
+ * - Wallet address: MiniKit.walletAddress (NOT MiniKit.user.walletAddress)
+ * - Username: MiniKit.user?.username
  */
 export function getUserInfo(): { username?: string; walletAddress?: string } | null {
   if (!MiniKit.isInstalled()) {
@@ -518,31 +521,22 @@ export function getUserInfo(): { username?: string; walletAddress?: string } | n
     return null;
   }
   
-  const user = MiniKit.user;
-  if (!user) {
-    console.log('[MiniKit] No user object available');
-    return null;
-  }
-  
-  // Try different property names for wallet address
-  // MiniKit API may use walletAddress, wallet_address, or address
+  // Get wallet address directly from MiniKit (not from user object)
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const userAny = user as any;
-  const walletAddress = 
-    user.walletAddress || 
-    userAny.wallet_address || 
-    userAny.address ||
-    userAny.wallet ||
-    null;
+  const minikit = MiniKit as any;
+  const walletAddress = minikit.walletAddress || (typeof window !== 'undefined' && (window as any).MiniKit?.walletAddress);
+  
+  // Get username from user object
+  const user = MiniKit.user;
+  const username = user?.username;
   
   console.log('[MiniKit] User info:', {
-    username: user.username,
+    username: username || 'null',
     walletAddress: walletAddress ? `${walletAddress.substring(0, 10)}...` : 'null',
-    rawUserKeys: Object.keys(userAny),
   });
   
   return {
-    username: user.username,
+    username: username,
     walletAddress: walletAddress,
   };
 }
