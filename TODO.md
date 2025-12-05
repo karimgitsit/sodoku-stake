@@ -284,26 +284,21 @@ Deploy the app to Vercel and set up production database.
 - [x] Transfer USDC to your payout wallet on **World Chain** (6 USDC for testing)
 - [x] Can add more as needed before launch
 
-#### D. Verify Production
-- [ ] Visit production URL
-- [ ] Test full flow end-to-end
-- [ ] Check data appears in production Supabase
-- [ ] Verify payout wallet is funded
+#### D. Verify Production ✅
+- [x] Visit production URL: https://sodoku-stake.vercel.app/
+- [x] Test full flow end-to-end in World App
+- [x] Check data appears in production Supabase
+- [x] Verify payout wallet is funded (6 USDC)
+- [x] Fixed wallet address capture (from transaction verification)
 
-#### E. Automated Prize Distribution (Vercel Cron)
-Set up daily automated prize distribution at 00:00 UTC.
+#### E. Automated Prize Distribution (Vercel Cron) ✅
+Set up daily automated prize distribution at 00:05 UTC.
 
-- [ ] Create `/api/cron/distribute` route (API wrapper for distribution script)
-- [ ] Create `vercel.json` with cron configuration:
-  ```json
-  {
-    "crons": [{
-      "path": "/api/cron/distribute",
-      "schedule": "0 0 * * *"
-    }]
-  }
-  ```
-- [ ] Add `CRON_SECRET` env var in Vercel for security
+- [x] Create `/api/cron/distribute` route (API wrapper for distribution script)
+- [x] Update `vercel.json` with cron configuration:
+  - Notifications: every hour (`0 * * * *`)
+  - Distribution: daily at 00:05 UTC (`5 0 * * *`)
+- [x] `CRON_SECRET` env var configured in Vercel
 - [ ] Deploy and verify cron appears in Vercel dashboard
 - [ ] Monitor first few automated runs in Vercel logs
 
