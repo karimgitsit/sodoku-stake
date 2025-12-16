@@ -1,7 +1,8 @@
 'use client';
 
 import { useGameStore } from '@/store/gameStore';
-import { useEffect, useState } from 'react';
+import { useWallet } from '@/components/MiniKitProvider';
+import { useEffect, useState, useRef } from 'react';
 import { verifyWorldId, payEntryFee, isMiniKitAvailable, ACTIONS } from '@/lib/worldcoin';
 
 interface YesterdayStats {
@@ -9,11 +10,26 @@ interface YesterdayStats {
   prizePerWinner: number;
 }
 
+interface SessionResponse {
+  success: boolean;
+  hasSession: boolean;
+  puzzle?: number[][];
+  date?: string;
+  difficulty?: string;
+  entryId?: string;
+  status?: 'in_progress' | 'won' | 'lost';
+  mistakesCount?: number;
+  maxMistakes?: number;
+  gameLocked?: boolean;
+  error?: string;
+}
+
 export function HomeScreen() {
   const { 
     setScreen, 
     setGameStatus, 
     setPuzzleFromServer,
+    restoreGameSession,
     setUserInfo,
     setTodayStats,
     currentStreak, 
@@ -22,15 +38,130 @@ export function HomeScreen() {
     todaySuccessRate,
     prizePool,
     gameStatus,
-    username,
     puzzle,
+    puzzleUserId,
   } = useGameStore();
+  
+  // Get the actual username from MiniKit/World App
+  const { username: miniKitUsername } = useWallet();
 
   const [timeRemaining, setTimeRemaining] = useState('');
   const [error, setError] = useState<string | null>(null);
-  const [step, setStep] = useState<'idle' | 'verifying' | 'paying' | 'loading'>('idle');
+  const [step, setStep] = useState<'idle' | 'verifying' | 'paying' | 'loading' | 'restoring'>('idle');
   const [yesterdayStats, setYesterdayStats] = useState<YesterdayStats | null>(null);
+  const sessionCheckDone = useRef(false);
 
+  // Get today's date for puzzle (defined early for use in session check)
+  const getTodayDate = () => {
+    const now = new Date();
+    return `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, '0')}-${String(now.getUTCDate()).padStart(2, '0')}`;
+  };
+
+  // Check for existing game session on mount (only once)
+  useEffect(() => {
+    const checkExistingSession = async () => {
+      // Only check once per mount
+      if (sessionCheckDone.current) return;
+      sessionCheckDone.current = true;
+      
+      // If we already have a puzzle loaded and game is in progress, no need to check
+      if (puzzle && (gameStatus === 'playing' || gameStatus === 'locked')) {
+        console.log('[HomeScreen] Game already in progress, skipping session check');
+        return;
+      }
+      
+      setStep('restoring');
+      console.log('[HomeScreen] Checking for existing game session...');
+      
+      try {
+        const todayDate = getTodayDate();
+        
+        // First, check if we have a stored userId from a previous session
+        // This helps in dev mode where each verifyWorldId call generates a new mock nullifier
+        let userId: string | null = null;
+        
+        try {
+          const storedGameState = localStorage.getItem('sodoku_stake_game_state');
+          if (storedGameState) {
+            const parsed = JSON.parse(storedGameState);
+            // Only use stored userId if it's from today
+            if (parsed.puzzleDate === todayDate && parsed.puzzleUserId) {
+              userId = parsed.puzzleUserId;
+              console.log('[HomeScreen] Using stored userId from localStorage');
+            }
+          }
+        } catch (e) {
+          console.log('[HomeScreen] No valid stored session found');
+        }
+        
+        // If no stored userId, verify World ID to get one
+        if (!userId) {
+          const verifyResult = await verifyWorldId(ACTIONS.DAILY_ENTRY, todayDate);
+          
+          if (!verifyResult.success || !verifyResult.nullifierHash) {
+            console.log('[HomeScreen] World ID verification needed for session check');
+            setStep('idle');
+            return;
+          }
+          
+          userId = verifyResult.nullifierHash;
+        }
+        
+        // Check if user has an existing session
+        const response = await fetch(`/api/game/session?userId=${encodeURIComponent(userId)}`);
+        const data: SessionResponse = await response.json();
+        
+        if (!data.success) {
+          console.error('[HomeScreen] Session check failed:', data.error);
+          setStep('idle');
+          return;
+        }
+        
+        if (data.hasSession && data.puzzle && data.date && data.entryId) {
+          console.log(`[HomeScreen] Found existing session: status=${data.status}, mistakes=${data.mistakesCount}/${data.maxMistakes}`);
+          
+          // Restore the game session
+          restoreGameSession({
+            puzzle: data.puzzle,
+            date: data.date,
+            userId: userId,
+            entryId: data.entryId,
+            status: data.status || 'in_progress',
+            mistakesCount: data.mistakesCount || 0,
+            maxMistakes: data.maxMistakes || 3,
+            gameLocked: data.gameLocked || false,
+          });
+          
+          // Update user info with MiniKit username
+          setUserInfo({
+            username: miniKitUsername || 'Player',
+            walletAddress: '',
+            streak: currentStreak,
+            insurance: hasStreakInsurance,
+          });
+          
+          // Set appropriate game status
+          if (data.status === 'won') {
+            setGameStatus('won');
+          } else if (data.status === 'lost' || data.gameLocked) {
+            setGameStatus('locked');
+          } else {
+            setGameStatus('playing');
+          }
+        } else {
+          console.log('[HomeScreen] No existing session found');
+        }
+        
+      } catch (err) {
+        console.error('[HomeScreen] Error checking session:', err);
+      } finally {
+        setStep('idle');
+      }
+    };
+    
+    checkExistingSession();
+  }, []); // Empty deps - run only once on mount
+  
   // Fetch today's stats from the API
   useEffect(() => {
     const fetchStats = async () => {
@@ -84,15 +215,9 @@ export function HomeScreen() {
     return () => clearInterval(interval);
   }, []);
 
-  // Get today's date for puzzle
-  const getTodayDate = () => {
-    const now = new Date();
-    return `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, '0')}-${String(now.getUTCDate()).padStart(2, '0')}`;
-  };
-
   const handlePlayClick = async () => {
-    // If already playing and puzzle is loaded, just navigate to puzzle screen
-    if (gameStatus === 'playing' && puzzle) {
+    // If already playing (or locked but has puzzle), just navigate to puzzle screen
+    if ((gameStatus === 'playing' || gameStatus === 'locked') && puzzle) {
       setScreen('puzzle');
       return;
     }
@@ -115,9 +240,9 @@ export function HomeScreen() {
       const userId = verifyResult.nullifierHash!;
       console.log('[Entry] World ID verified:', userId.substring(0, 16) + '...');
       
-      // Update user info in store
+      // Update user info in store with MiniKit username
       setUserInfo({
-        username: username || 'Player',
+        username: miniKitUsername || 'Player',
         walletAddress: '', // Will be populated from MiniKit
         streak: currentStreak,
         insurance: hasStreakInsurance,
@@ -163,9 +288,12 @@ export function HomeScreen() {
 
   const getButtonText = () => {
     if (gameStatus === 'won') return '✅ Come Back Tomorrow';
-    if (gameStatus === 'playing' && puzzle) return '▶️ Continue Playing';
+    if (gameStatus === 'locked' && puzzle) return '🔒 Game Locked - Buy Extra Life';
+    if ((gameStatus === 'playing' || gameStatus === 'locked') && puzzle) return '▶️ Continue Playing';
     
     switch (step) {
+      case 'restoring':
+        return '🔄 Checking for saved game...';
       case 'verifying':
         return '🔐 Verifying Identity...';
       case 'paying':
@@ -183,6 +311,8 @@ export function HomeScreen() {
         return { text: '✅ Solved Today!', color: 'text-success' };
       case 'lost':
         return { text: '❌ Missed Today', color: 'text-accent' };
+      case 'locked':
+        return { text: '🔒 Game Locked', color: 'text-accent' };
       case 'playing':
         return { text: '🎯 In Progress', color: 'text-warning' };
       default:
@@ -272,24 +402,29 @@ export function HomeScreen() {
       {/* Play Button */}
       <button
         onClick={handlePlayClick}
-        disabled={gameStatus === 'won' || step !== 'idle'}
+        disabled={gameStatus === 'won' || gameStatus === 'lost' || (step !== 'idle' && step !== 'restoring')}
         className={`
           w-full py-4 rounded-2xl font-bold text-lg transition-all duration-200
-          ${gameStatus === 'won' 
+          ${gameStatus === 'won' || gameStatus === 'lost'
             ? 'bg-success/20 text-success cursor-not-allowed' 
             : step !== 'idle'
             ? 'bg-primary cursor-wait animate-pulse'
+            : (gameStatus === 'playing' || gameStatus === 'locked') && puzzle
+            ? 'bg-success active:scale-98'
             : 'bg-primary active:scale-98'
           }
         `}
-        style={{ color: gameStatus === 'won' ? undefined : '#ffffff' }}
+        style={{ color: (gameStatus === 'won' || gameStatus === 'lost') ? undefined : '#ffffff' }}
       >
         {getButtonText()}
       </button>
 
       {/* Entry Fee Info */}
       <p className="text-center text-xs text-muted mt-3">
-        Entry fee: $1.00 USDC • Winners always break even or profit
+        {(gameStatus === 'playing' || gameStatus === 'locked') && puzzle 
+          ? 'Continue your game - no additional payment required'
+          : 'Entry fee: $1.00 USDC • Winners always break even or profit'
+        }
       </p>
 
       {/* Error Message */}

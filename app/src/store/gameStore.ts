@@ -1,6 +1,62 @@
 import { create } from 'zustand';
 import { Cell, SudokuGrid, GameStatus, AppScreen, CellValue } from '@/types';
 
+// =============================================================================
+// LOCAL STORAGE PERSISTENCE
+// =============================================================================
+
+const STORAGE_KEY = 'sodoku_stake_game_state';
+
+interface PersistedGameState {
+  puzzleDate: string;
+  puzzleUserId: string;
+  gameEntryId: string | null;
+  puzzleProgress: (number | null)[][]; // Current values filled in by user
+  notesGrid: number[][][]; // Notes for each cell
+  mistakesCount: number;
+  maxMistakes: number;
+  gameLocked: boolean;
+  errorCells: string[]; // Array of "row,col" strings
+  gameStatus: GameStatus;
+  startTime: number | null;
+}
+
+function saveGameToStorage(state: PersistedGameState): void {
+  if (typeof window === 'undefined') return;
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    console.log('[GameStore] Saved game progress to localStorage');
+  } catch (error) {
+    console.error('[GameStore] Failed to save game state:', error);
+  }
+}
+
+function loadGameFromStorage(): PersistedGameState | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const stored = localStorage.getItem(STORAGE_KEY);
+    if (!stored) return null;
+    return JSON.parse(stored) as PersistedGameState;
+  } catch (error) {
+    console.error('[GameStore] Failed to load game state:', error);
+    return null;
+  }
+}
+
+function clearGameStorage(): void {
+  if (typeof window === 'undefined') return;
+  try {
+    localStorage.removeItem(STORAGE_KEY);
+    console.log('[GameStore] Cleared game progress from localStorage');
+  } catch (error) {
+    console.error('[GameStore] Failed to clear game state:', error);
+  }
+}
+
+// =============================================================================
+// TYPES
+// =============================================================================
+
 interface GameState {
   // Navigation
   currentScreen: AppScreen;
@@ -32,6 +88,16 @@ interface GameState {
   // Actions
   setPuzzle: (puzzle: number[][], solution: number[][]) => void;
   setPuzzleFromServer: (puzzle: number[][], date: string, userId: string, entryId?: string) => void;
+  restoreGameSession: (params: {
+    puzzle: number[][];
+    date: string;
+    userId: string;
+    entryId: string;
+    status: 'in_progress' | 'won' | 'lost';
+    mistakesCount: number;
+    maxMistakes: number;
+    gameLocked: boolean;
+  }) => void;
   selectCell: (row: number, col: number) => void;
   clearSelection: () => void;
   setNumber: (num: number) => void;
@@ -44,6 +110,7 @@ interface GameState {
   submitSolution: () => Promise<{ correct: boolean; message: string }>;
   resetGame: () => void;
   getCurrentGrid: () => number[][] | null;
+  saveProgress: () => void;
   
   // Mistakes actions
   setMistakesState: (state: { mistakesCount: number; maxMistakes: number; gameLocked: boolean }) => void;
@@ -175,21 +242,140 @@ export const useGameStore = create<GameState>((set, get) => ({
   }),
 
   // Set puzzle from server (no solution - validation is server-side)
-  setPuzzleFromServer: (puzzle, date, userId, entryId) => set({
-    puzzle: numberGridToCellGrid(puzzle),
-    solution: null, // Server keeps the solution secret
-    puzzleDate: date,
-    puzzleUserId: userId,
-    gameEntryId: entryId || null,
-    startTime: Date.now(),
-    gameStatus: 'playing',
-    history: [],
-    mistakesCount: 0,
-    maxMistakes: 3,
-    gameLocked: false,
-    errorCells: new Set<string>(),
-    lastMistakeMessage: null,
-  }),
+  setPuzzleFromServer: (puzzle, date, userId, entryId) => {
+    const startTime = Date.now();
+    set({
+      puzzle: numberGridToCellGrid(puzzle),
+      solution: null, // Server keeps the solution secret
+      puzzleDate: date,
+      puzzleUserId: userId,
+      gameEntryId: entryId || null,
+      startTime,
+      gameStatus: 'playing',
+      history: [],
+      mistakesCount: 0,
+      maxMistakes: 3,
+      gameLocked: false,
+      errorCells: new Set<string>(),
+      lastMistakeMessage: null,
+    });
+    
+    // Save initial state to localStorage
+    saveGameToStorage({
+      puzzleDate: date,
+      puzzleUserId: userId,
+      gameEntryId: entryId || null,
+      puzzleProgress: puzzle.map(row => row.map(v => v === 0 ? null : v)),
+      notesGrid: puzzle.map(row => row.map(() => [])),
+      mistakesCount: 0,
+      maxMistakes: 3,
+      gameLocked: false,
+      errorCells: [],
+      gameStatus: 'playing',
+      startTime,
+    });
+  },
+
+  // Restore a game session (e.g., when user comes back after quitting)
+  restoreGameSession: (params) => {
+    const { puzzle, date, userId, entryId, status, mistakesCount, maxMistakes, gameLocked } = params;
+    
+    // Try to load saved progress from localStorage
+    const savedState = loadGameFromStorage();
+    
+    let cellGrid = numberGridToCellGrid(puzzle);
+    let errorCellsSet = new Set<string>();
+    let gameStatus: GameStatus = status === 'won' ? 'won' : status === 'lost' ? 'lost' : gameLocked ? 'locked' : 'playing';
+    let startTime = Date.now();
+    
+    // If we have saved progress for the same game, restore it
+    if (savedState && savedState.puzzleDate === date && savedState.puzzleUserId === userId) {
+      console.log('[GameStore] Restoring saved progress from localStorage');
+      
+      // Apply saved progress to the puzzle grid
+      for (let row = 0; row < 9; row++) {
+        for (let col = 0; col < 9; col++) {
+          const baseValue = puzzle[row][col];
+          if (baseValue === 0) {
+            // This is an empty cell - check if user filled it
+            const savedValue = savedState.puzzleProgress[row][col];
+            if (savedValue !== null) {
+              cellGrid[row][col].value = savedValue;
+            }
+            // Restore notes
+            const savedNotes = savedState.notesGrid[row]?.[col] || [];
+            cellGrid[row][col].notes = new Set(savedNotes);
+          }
+        }
+      }
+      
+      // Restore error cells
+      errorCellsSet = new Set(savedState.errorCells);
+      for (const cellKey of savedState.errorCells) {
+        const [row, col] = cellKey.split(',').map(Number);
+        if (cellGrid[row] && cellGrid[row][col]) {
+          cellGrid[row][col].hasError = true;
+        }
+      }
+      
+      // Restore start time if available
+      if (savedState.startTime) {
+        startTime = savedState.startTime;
+      }
+    }
+    
+    set({
+      puzzle: cellGrid,
+      solution: null,
+      puzzleDate: date,
+      puzzleUserId: userId,
+      gameEntryId: entryId,
+      startTime,
+      gameStatus,
+      history: [],
+      mistakesCount,
+      maxMistakes,
+      gameLocked,
+      errorCells: errorCellsSet,
+      lastMistakeMessage: null,
+    });
+    
+    console.log(`[GameStore] Restored game session: status=${gameStatus}, mistakes=${mistakesCount}/${maxMistakes}`);
+  },
+
+  // Save current puzzle progress to localStorage
+  saveProgress: () => {
+    const state = get();
+    if (!state.puzzle || !state.puzzleDate || !state.puzzleUserId) return;
+    
+    // Extract current values and notes from the puzzle grid
+    const puzzleProgress: (number | null)[][] = [];
+    const notesGrid: number[][][] = [];
+    
+    for (let row = 0; row < 9; row++) {
+      puzzleProgress.push([]);
+      notesGrid.push([]);
+      for (let col = 0; col < 9; col++) {
+        const cell = state.puzzle[row][col];
+        puzzleProgress[row].push(cell.value);
+        notesGrid[row].push(Array.from(cell.notes));
+      }
+    }
+    
+    saveGameToStorage({
+      puzzleDate: state.puzzleDate,
+      puzzleUserId: state.puzzleUserId,
+      gameEntryId: state.gameEntryId,
+      puzzleProgress,
+      notesGrid,
+      mistakesCount: state.mistakesCount,
+      maxMistakes: state.maxMistakes,
+      gameLocked: state.gameLocked,
+      errorCells: Array.from(state.errorCells),
+      gameStatus: state.gameStatus,
+      startTime: state.startTime,
+    });
+  },
 
   // Get current grid as number array for submission
   getCurrentGrid: () => {
@@ -233,6 +419,8 @@ export const useGameStore = create<GameState>((set, get) => ({
 
       if (data.correct) {
         set({ gameStatus: 'won' });
+        // Save the winning state
+        get().saveProgress();
       }
 
       return {
@@ -279,6 +467,9 @@ export const useGameStore = create<GameState>((set, get) => ({
       errorCells.delete(`${row},${col}`);
       
       set({ puzzle: newPuzzle, errorCells });
+      
+      // Save progress after each move
+      get().saveProgress();
     }
   },
 
@@ -354,6 +545,9 @@ export const useGameStore = create<GameState>((set, get) => ({
           lastMistakeMessage: null,
         });
       }
+      
+      // Save progress after validation
+      get().saveProgress();
 
       return {
         correct: data.correct,
@@ -384,6 +578,9 @@ export const useGameStore = create<GameState>((set, get) => ({
     errorCells.delete(`${row},${col}`);
     
     set({ puzzle: newPuzzle, errorCells });
+    
+    // Save progress after clearing
+    get().saveProgress();
   },
 
   toggleNotesMode: () => set((state) => ({ notesMode: !state.notesMode })),
@@ -405,6 +602,9 @@ export const useGameStore = create<GameState>((set, get) => ({
     }
     
     set({ puzzle: newPuzzle });
+    
+    // Save progress after toggling notes
+    get().saveProgress();
   },
 
   pushHistory: () => {
@@ -452,23 +652,28 @@ export const useGameStore = create<GameState>((set, get) => ({
     return true;
   },
 
-  resetGame: () => set({
-    puzzle: null,
-    solution: null,
-    selectedCell: null,
-    notesMode: false,
-    startTime: null,
-    gameStatus: 'not_started',
-    history: [],
-    puzzleDate: null,
-    puzzleUserId: null,
-    gameEntryId: null,
-    mistakesCount: 0,
-    maxMistakes: 3,
-    gameLocked: false,
-    errorCells: new Set<string>(),
-    lastMistakeMessage: null,
-  }),
+  resetGame: () => {
+    // Clear localStorage when resetting game
+    clearGameStorage();
+    
+    set({
+      puzzle: null,
+      solution: null,
+      selectedCell: null,
+      notesMode: false,
+      startTime: null,
+      gameStatus: 'not_started',
+      history: [],
+      puzzleDate: null,
+      puzzleUserId: null,
+      gameEntryId: null,
+      mistakesCount: 0,
+      maxMistakes: 3,
+      gameLocked: false,
+      errorCells: new Set<string>(),
+      lastMistakeMessage: null,
+    });
+  },
 
   // Mistakes actions
   setMistakesState: (state) => set({

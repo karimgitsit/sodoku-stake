@@ -1,11 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { Tokens, tokenToDecimals } from '@worldcoin/minikit-js';
+import { getOrCreateUser, getUserEntry } from '@/lib/db';
 
 /**
  * POST /api/payment/initiate
  * 
  * Initiates a payment by generating a secure reference ID.
  * This reference is stored server-side and used to verify the payment later.
+ * 
+ * IMPORTANT: For entry payments, this endpoint checks if the user already has
+ * an entry for today. If they do, it returns an error BEFORE they can pay,
+ * preventing accidental double payments.
  * 
  * Following Worldcoin best practices:
  * https://docs.world.org/mini-apps/commands/pay
@@ -130,6 +135,29 @@ export async function POST(request: NextRequest) {
         { error: 'Missing gameEntryId for extra_life payment' },
         { status: 400 }
       );
+    }
+
+    // IMPORTANT: For entry payments, check if user already has an entry for today
+    // This prevents users from accidentally paying twice if they already started a game
+    if (type === 'entry') {
+      try {
+        const user = await getOrCreateUser(userId);
+        const existingEntry = await getUserEntry(user.id, puzzleDate);
+        
+        if (existingEntry) {
+          console.log(`[Payment] User ${userId.substring(0, 16)}... already has entry for ${puzzleDate}`);
+          return NextResponse.json(
+            { 
+              error: 'You already have an active game for today. Go to the puzzle screen to continue playing.',
+              hasExistingEntry: true,
+            },
+            { status: 400 }
+          );
+        }
+      } catch (error) {
+        console.error('[Payment] Error checking existing entry:', error);
+        // Continue with payment initiation if check fails
+      }
     }
 
     // Clean up old references periodically
