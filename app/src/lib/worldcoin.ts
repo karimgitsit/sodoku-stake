@@ -29,15 +29,20 @@ import {
 // Entry fee in USDC - using tokenToDecimals for proper conversion
 export const ENTRY_FEE_AMOUNT = 1; // $1.00
 export const REVEAL_FEE_AMOUNT = 0.2; // $0.20
+export const EXTRA_LIFE_FEE_AMOUNT = 0.25; // $0.25
 
 // Convert to token decimals for MiniKit
 export const ENTRY_FEE_USDC = tokenToDecimals(ENTRY_FEE_AMOUNT, Tokens.USDC).toString();
 export const REVEAL_FEE_USDC = tokenToDecimals(REVEAL_FEE_AMOUNT, Tokens.USDC).toString();
+export const EXTRA_LIFE_FEE_USDC = tokenToDecimals(EXTRA_LIFE_FEE_AMOUNT, Tokens.USDC).toString();
 
 // Wallet addresses - set these in environment variables
-// Platform wallet receives ALL payments (entries + reveals)
+// Platform wallet receives entry fees + reveals (forms prize pool)
 // At midnight, prizes are distributed and remainder is swept to developer wallet
 export const PLATFORM_WALLET = process.env.NEXT_PUBLIC_PLATFORM_WALLET || '0x0000000000000000000000000000000000000000';
+
+// Developer wallet receives direct revenue (extra lives)
+export const DEVELOPER_WALLET = process.env.NEXT_PUBLIC_DEVELOPER_WALLET || '0x0000000000000000000000000000000000000000';
 
 // App ID from World Developer Portal
 export const APP_ID = process.env.NEXT_PUBLIC_APP_ID || 'app_staging_demo';
@@ -72,6 +77,10 @@ export interface PaymentResult {
   value?: number;
   row?: number;
   col?: number;
+  // For extra life payments
+  mistakesCount?: number;
+  maxMistakes?: number;
+  gameLocked?: boolean;
 }
 
 export interface InitiatePaymentResponse {
@@ -79,7 +88,7 @@ export interface InitiatePaymentResponse {
   reference?: string;
   amount?: string;
   tokenAmount?: string;
-  type?: 'entry' | 'reveal';
+  type?: 'entry' | 'reveal' | 'extra_life';
   error?: string;
 }
 
@@ -96,6 +105,10 @@ export interface ConfirmPaymentResponse {
   value?: number;
   row?: number;
   col?: number;
+  // For extra life payments
+  mistakesCount?: number;
+  maxMistakes?: number;
+  gameLocked?: boolean;
 }
 
 // =============================================================================
@@ -182,9 +195,10 @@ export async function verifyWorldId(
  */
 async function initiatePayment(
   userId: string,
-  type: 'entry' | 'reveal',
+  type: 'entry' | 'reveal' | 'extra_life',
   puzzleDate: string,
-  cellPosition?: { row: number; col: number }
+  cellPosition?: { row: number; col: number },
+  gameEntryId?: string
 ): Promise<InitiatePaymentResponse> {
   try {
     // Get user info from MiniKit (includes wallet address)
@@ -198,6 +212,7 @@ async function initiatePayment(
         type,
         puzzleDate,
         cellPosition,
+        gameEntryId,
         username: userInfo?.username,
         walletAddress: userInfo?.walletAddress,
       }),
@@ -232,13 +247,19 @@ async function initiatePayment(
 /**
  * Step 2: Send payment via MiniKit
  * Uses the reference from step 1
+ * 
+ * @param toAddress - Optional destination wallet (defaults to PLATFORM_WALLET)
  */
 async function sendPayment(
   reference: string,
   tokenAmount: string,
-  description: string
+  description: string,
+  toAddress?: string
 ): Promise<{ success: boolean; transactionId?: string; error?: string }> {
   try {
+    // Default to platform wallet if no address specified
+    const destinationWallet = toAddress || PLATFORM_WALLET;
+    
     // Check if MiniKit is available
     if (!MiniKit.isInstalled()) {
       console.warn('[Payment] MiniKit not installed - running outside World App');
@@ -258,7 +279,7 @@ async function sendPayment(
     // Request payment with the backend-generated reference
     const { finalPayload } = await MiniKit.commandsAsync.pay({
       reference,
-      to: PLATFORM_WALLET,
+      to: destinationWallet,
       tokens: [
         {
           symbol: Tokens.USDC,
@@ -467,6 +488,76 @@ export async function payRevealFee(
   };
 }
 
+/**
+ * Process extra life payment ($0.25 USDC)
+ * Complete secure payment flow: initiate → pay → confirm
+ * 
+ * Allows user to continue playing after making too many mistakes.
+ * 
+ * @param userId - User's World ID nullifier hash
+ * @param puzzleDate - The date of the puzzle
+ * @param gameEntryId - The game entry ID to add extra life to
+ */
+export async function payExtraLife(
+  userId: string,
+  puzzleDate: string,
+  gameEntryId: string
+): Promise<PaymentResult> {
+  console.log('[Payment] Starting extra life fee flow...');
+
+  // Step 1: Initiate payment on backend
+  const initResult = await initiatePayment(userId, 'extra_life', puzzleDate, undefined, gameEntryId);
+  if (!initResult.success) {
+    return {
+      success: false,
+      error: initResult.error,
+    };
+  }
+
+  console.log('[Payment] Initiated extra life with reference:', initResult.reference);
+
+  // Step 2: Send payment via MiniKit - Extra life adds to prize pool
+  const payResult = await sendPayment(
+    initResult.reference!,
+    initResult.tokenAmount!,
+    `Sodoku Stake - Extra Life`
+    // No address specified = defaults to PLATFORM_WALLET (prize pool)
+  );
+
+  if (!payResult.success) {
+    return {
+      success: false,
+      error: payResult.error,
+    };
+  }
+
+  console.log('[Payment] Extra life payment sent, transaction:', payResult.transactionId);
+
+  // Step 3: Confirm payment on backend (verifies with Worldcoin API)
+  const confirmResult = await confirmPayment(
+    initResult.reference!,
+    payResult.transactionId!
+  );
+
+  if (!confirmResult.success) {
+    return {
+      success: false,
+      error: confirmResult.error,
+    };
+  }
+
+  console.log('[Payment] Extra life confirmed! New max mistakes:', confirmResult.maxMistakes);
+
+  return {
+    success: true,
+    transactionId: payResult.transactionId,
+    reference: initResult.reference,
+    mistakesCount: confirmResult.mistakesCount,
+    maxMistakes: confirmResult.maxMistakes,
+    gameLocked: confirmResult.gameLocked,
+  };
+}
+
 // =============================================================================
 // ERROR MESSAGES
 // =============================================================================
@@ -511,24 +602,39 @@ export function formatUSDC(amountInSmallestUnit: string): string {
 /**
  * Get user info from MiniKit (if available)
  * 
+ * The wallet address is captured during walletAuth in MiniKitProvider.
+ * We access it via the global getter functions.
+ * 
  * Per World App docs: https://docs.world.org/mini-apps/commands/wallet-auth
- * - Wallet address: MiniKit.walletAddress (NOT MiniKit.user.walletAddress)
+ * - Wallet address: Available after walletAuth command
  * - Username: MiniKit.user?.username
  */
 export function getUserInfo(): { username?: string; walletAddress?: string } | null {
-  if (!MiniKit.isInstalled()) {
-    console.log('[MiniKit] Not installed, cannot get user info');
-    return null;
+  // Import the global getters dynamically to avoid circular dependencies
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const { getGlobalWalletAddress, getGlobalUsername } = require('@/components/MiniKitProvider');
+  
+  // First try to get from our global state (set by walletAuth in MiniKitProvider)
+  let walletAddress = getGlobalWalletAddress();
+  let username = getGlobalUsername();
+  
+  // Fallback: try MiniKit directly (in case walletAuth set it there)
+  if (!walletAddress && MiniKit.isInstalled()) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const minikit = MiniKit as any;
+    walletAddress = minikit.walletAddress;
   }
   
-  // Get wallet address directly from MiniKit (not from user object)
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const minikit = MiniKit as any;
-  const walletAddress = minikit.walletAddress || (typeof window !== 'undefined' && (window as any).MiniKit?.walletAddress);
+  // Fallback for username
+  if (!username && MiniKit.isInstalled()) {
+    username = MiniKit.user?.username;
+  }
   
-  // Get username from user object
-  const user = MiniKit.user;
-  const username = user?.username;
+  // Dev mode fallback
+  if (!walletAddress && !MiniKit.isInstalled() && process.env.NODE_ENV === 'development') {
+    walletAddress = '0xDevMockWallet1234567890abcdef1234567890ab';
+    username = username || 'DevUser';
+  }
   
   console.log('[MiniKit] User info:', {
     username: username || 'null',
@@ -536,7 +642,7 @@ export function getUserInfo(): { username?: string; walletAddress?: string } | n
   });
   
   return {
-    username: username,
-    walletAddress: walletAddress,
+    username: username || undefined,
+    walletAddress: walletAddress || undefined,
   };
 }
