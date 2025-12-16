@@ -22,13 +22,13 @@ import { Tokens, tokenToDecimals } from '@worldcoin/minikit-js';
  * - tokenAmount: Amount in smallest unit (for MiniKit)
  */
 
-// In-memory storage for payment references (use Redis/database in production)
-// Map<reference, PaymentReference>
-const paymentReferences = new Map<string, {
+// Payment reference type
+type PaymentReference = {
   userId: string;
-  type: 'entry' | 'reveal';
+  type: 'entry' | 'reveal' | 'extra_life';
   puzzleDate: string;
   cellPosition?: { row: number; col: number };
+  gameEntryId?: string;
   amount: string;
   tokenAmount: string;
   createdAt: number;
@@ -36,7 +36,20 @@ const paymentReferences = new Map<string, {
   transactionId?: string;
   username?: string;
   walletAddress?: string;
-}>();
+};
+
+// In-memory storage for payment references (use Redis/database in production)
+// Use globalThis to persist across hot reloads in development
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const globalForPayments = globalThis as unknown as {
+  paymentReferences: Map<string, PaymentReference> | undefined;
+};
+
+const paymentReferences = globalForPayments.paymentReferences ?? new Map<string, PaymentReference>();
+
+if (process.env.NODE_ENV === 'development') {
+  globalForPayments.paymentReferences = paymentReferences;
+}
 
 // Clean up old references (older than 1 hour)
 function cleanupOldReferences() {
@@ -73,10 +86,15 @@ const REVEAL_FEE_AMOUNT = 0.2; // $0.20
 const REVEAL_FEE_USDC = tokenToDecimals(REVEAL_FEE_AMOUNT, Tokens.USDC).toString();
 const REVEAL_FEE_DISPLAY = '0.20';
 
+// Extra life fee: $0.25 USDC
+const EXTRA_LIFE_FEE_AMOUNT = 0.25; // $0.25
+const EXTRA_LIFE_FEE_USDC = tokenToDecimals(EXTRA_LIFE_FEE_AMOUNT, Tokens.USDC).toString();
+const EXTRA_LIFE_FEE_DISPLAY = '0.25';
+
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { userId, type, puzzleDate, cellPosition, username, walletAddress } = body;
+    const { userId, type, puzzleDate, cellPosition, gameEntryId, username, walletAddress } = body;
 
     // Validate request
     if (!userId) {
@@ -86,9 +104,9 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    if (!type || !['entry', 'reveal'].includes(type)) {
+    if (!type || !['entry', 'reveal', 'extra_life'].includes(type)) {
       return NextResponse.json(
-        { error: 'Invalid payment type (must be "entry" or "reveal")' },
+        { error: 'Invalid payment type (must be "entry", "reveal", or "extra_life")' },
         { status: 400 }
       );
     }
@@ -107,6 +125,13 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    if (type === 'extra_life' && !gameEntryId) {
+      return NextResponse.json(
+        { error: 'Missing gameEntryId for extra_life payment' },
+        { status: 400 }
+      );
+    }
+
     // Clean up old references periodically
     cleanupOldReferences();
 
@@ -114,8 +139,26 @@ export async function POST(request: NextRequest) {
     const reference = crypto.randomUUID().replace(/-/g, '');
 
     // Determine amount based on type
-    const tokenAmount = type === 'entry' ? ENTRY_FEE_USDC : REVEAL_FEE_USDC;
-    const amount = type === 'entry' ? ENTRY_FEE_DISPLAY : REVEAL_FEE_DISPLAY;
+    let tokenAmount: string;
+    let amount: string;
+    
+    switch (type) {
+      case 'entry':
+        tokenAmount = ENTRY_FEE_USDC;
+        amount = ENTRY_FEE_DISPLAY;
+        break;
+      case 'reveal':
+        tokenAmount = REVEAL_FEE_USDC;
+        amount = REVEAL_FEE_DISPLAY;
+        break;
+      case 'extra_life':
+        tokenAmount = EXTRA_LIFE_FEE_USDC;
+        amount = EXTRA_LIFE_FEE_DISPLAY;
+        break;
+      default:
+        tokenAmount = ENTRY_FEE_USDC;
+        amount = ENTRY_FEE_DISPLAY;
+    }
 
     // Store the reference for later verification
     paymentReferences.set(reference, {
@@ -123,6 +166,7 @@ export async function POST(request: NextRequest) {
       type,
       puzzleDate,
       cellPosition: type === 'reveal' ? cellPosition : undefined,
+      gameEntryId: type === 'extra_life' ? gameEntryId : undefined,
       amount,
       tokenAmount,
       createdAt: Date.now(),

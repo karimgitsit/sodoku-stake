@@ -4,12 +4,18 @@ import { useGameStore } from '@/store/gameStore';
 import { useEffect, useState } from 'react';
 import { verifyWorldId, payEntryFee, isMiniKitAvailable, ACTIONS } from '@/lib/worldcoin';
 
+interface YesterdayStats {
+  failureRate: number;
+  prizePerWinner: number;
+}
+
 export function HomeScreen() {
   const { 
     setScreen, 
     setGameStatus, 
     setPuzzleFromServer,
     setUserInfo,
+    setTodayStats,
     currentStreak, 
     hasStreakInsurance,
     todayPlayers,
@@ -23,6 +29,40 @@ export function HomeScreen() {
   const [timeRemaining, setTimeRemaining] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [step, setStep] = useState<'idle' | 'verifying' | 'paying' | 'loading'>('idle');
+  const [yesterdayStats, setYesterdayStats] = useState<YesterdayStats | null>(null);
+
+  // Fetch today's stats from the API
+  useEffect(() => {
+    const fetchStats = async () => {
+      try {
+        const response = await fetch('/api/puzzle/stats');
+        const data = await response.json();
+        
+        if (data.success && data.stats) {
+          setTodayStats({
+            players: data.stats.players,
+            successRate: data.stats.failureRate, // API returns failure rate
+            pool: data.stats.pool,
+          });
+        }
+        
+        // Also set yesterday's stats if available
+        if (data.yesterdayStats) {
+          setYesterdayStats({
+            failureRate: data.yesterdayStats.failureRate,
+            prizePerWinner: data.yesterdayStats.prizePerWinner,
+          });
+        }
+      } catch (err) {
+        console.error('[HomeScreen] Failed to fetch stats:', err);
+      }
+    };
+
+    fetchStats();
+    // Refresh stats every 30 seconds
+    const interval = setInterval(fetchStats, 30000);
+    return () => clearInterval(interval);
+  }, [setTodayStats]);
 
   // Calculate time until midnight UTC
   useEffect(() => {
@@ -106,9 +146,10 @@ export function HomeScreen() {
       console.log(`🧩 Puzzle ready for ${userId.substring(0, 16)}...`);
       console.log(`📅 Date: ${payResult.date}`);
       console.log(`📊 Difficulty: ${payResult.difficulty}`);
+      console.log(`🎫 Entry ID: ${payResult.entryId}`);
       
       // Set puzzle in store (puzzle comes from payment confirmation)
-      setPuzzleFromServer(payResult.puzzle, payResult.date, userId);
+      setPuzzleFromServer(payResult.puzzle, payResult.date, userId, payResult.entryId);
       setScreen('puzzle');
       
     } catch (err) {
@@ -262,11 +303,15 @@ export function HomeScreen() {
       <div className="mt-auto pt-4">
         <div className="bg-card/50 border border-border rounded-xl p-3">
           <p className="text-xs text-muted mb-1">Yesterday&apos;s Result</p>
-          <p className="text-sm">
-            <span className="text-muted">47% failed</span>
-            <span className="mx-2">•</span>
-            <span className="text-success">Winners earned $1.78 each</span>
-          </p>
+          {yesterdayStats ? (
+            <p className="text-sm">
+              <span className="text-muted">{yesterdayStats.failureRate}% failed</span>
+              <span className="mx-2">•</span>
+              <span className="text-success">Winners earned ${yesterdayStats.prizePerWinner.toFixed(2)} each</span>
+            </p>
+          ) : (
+            <p className="text-sm text-muted">Loading...</p>
+          )}
         </div>
       </div>
     </div>

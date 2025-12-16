@@ -1,0 +1,313 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Results Screen Mockup</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+    
+    :root {
+      --background: #FAF7F2;
+      --foreground: #1a1a1a;
+      --primary: #2563eb;
+      --primary-dark: #1d4ed8;
+      --secondary: #f1ebe4;
+      --accent: #dc2626;
+      --success: #16a34a;
+      --warning: #d97706;
+      --card: #ffffff;
+      --card-hover: #f8f5f0;
+      --border: #e5e0d8;
+      --muted: #6b7280;
+    }
+    
+    body {
+      font-family: 'Space Grotesk', -apple-system, BlinkMacSystemFont, sans-serif;
+      background: var(--background);
+      color: var(--foreground);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+    
+    .container {
+      flex: 1;
+      padding: 16px;
+      padding-bottom: 100px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding-top: 60px;
+    }
+    
+    .trophy {
+      font-size: 5rem;
+      margin-bottom: 16px;
+      animation: bounce 1s ease infinite;
+    }
+    
+    @keyframes bounce {
+      0%, 100% { transform: translateY(0); }
+      50% { transform: translateY(-10px); }
+    }
+    
+    .title {
+      font-size: 2rem;
+      font-weight: 700;
+      color: var(--success);
+      margin-bottom: 8px;
+    }
+    
+    .subtitle {
+      color: var(--muted);
+      margin-bottom: 24px;
+    }
+    
+    .prize-card {
+      background: linear-gradient(135deg, #16a34a 0%, #22c55e 100%);
+      color: white;
+      padding: 24px 48px;
+      border-radius: 20px;
+      text-align: center;
+      margin-bottom: 24px;
+      box-shadow: 0 10px 40px rgba(22, 163, 74, 0.3);
+    }
+    
+    .prize-label {
+      font-size: 0.875rem;
+      opacity: 0.9;
+      margin-bottom: 4px;
+    }
+    
+    .prize-amount {
+      font-size: 3rem;
+      font-weight: 700;
+    }
+    
+    .stats-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 12px;
+      width: 100%;
+      margin-bottom: 24px;
+    }
+    
+    .stat-card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 16px;
+      text-align: center;
+    }
+    
+    .stat-value {
+      font-size: 1.5rem;
+      font-weight: 700;
+      color: var(--primary);
+    }
+    
+    .stat-label {
+      font-size: 0.75rem;
+      color: var(--muted);
+      margin-top: 4px;
+    }
+    
+    .streak-card {
+      background: linear-gradient(135deg, #f97316 0%, #eab308 100%);
+      color: white;
+      padding: 16px 24px;
+      border-radius: 16px;
+      text-align: center;
+      width: 100%;
+      margin-bottom: 24px;
+    }
+    
+    .streak-label {
+      font-size: 0.875rem;
+      opacity: 0.9;
+    }
+    
+    .streak-value {
+      font-size: 1.5rem;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+    }
+    
+    .action-btns {
+      display: flex;
+      gap: 12px;
+      width: 100%;
+    }
+    
+    .share-btn {
+      flex: 1;
+      padding: 16px;
+      background: var(--primary);
+      color: white;
+      border: none;
+      border-radius: 16px;
+      font-size: 1rem;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+    }
+    
+    .home-btn {
+      flex: 1;
+      padding: 16px;
+      background: var(--card);
+      color: var(--foreground);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      font-size: 1rem;
+      font-weight: 600;
+    }
+    
+    .bottom-nav {
+      position: fixed;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      background: var(--card);
+      border-top: 1px solid var(--border);
+      padding: 8px 0;
+      padding-bottom: 20px;
+      display: flex;
+      justify-content: space-around;
+    }
+    
+    .nav-item {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      color: var(--muted);
+      font-size: 0.75rem;
+    }
+    
+    .nav-item.active {
+      color: var(--primary);
+    }
+    
+    .nav-item span:first-child {
+      font-size: 1.5rem;
+    }
+    
+    .confetti {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      pointer-events: none;
+      overflow: hidden;
+    }
+    
+    .confetti-piece {
+      position: absolute;
+      width: 10px;
+      height: 10px;
+      background: var(--primary);
+      animation: fall 3s linear infinite;
+    }
+    
+    .confetti-piece:nth-child(1) { left: 10%; background: #2563eb; animation-delay: 0s; }
+    .confetti-piece:nth-child(2) { left: 20%; background: #16a34a; animation-delay: 0.2s; }
+    .confetti-piece:nth-child(3) { left: 30%; background: #f97316; animation-delay: 0.4s; }
+    .confetti-piece:nth-child(4) { left: 40%; background: #eab308; animation-delay: 0.6s; }
+    .confetti-piece:nth-child(5) { left: 50%; background: #2563eb; animation-delay: 0.8s; }
+    .confetti-piece:nth-child(6) { left: 60%; background: #16a34a; animation-delay: 1s; }
+    .confetti-piece:nth-child(7) { left: 70%; background: #f97316; animation-delay: 1.2s; }
+    .confetti-piece:nth-child(8) { left: 80%; background: #eab308; animation-delay: 1.4s; }
+    .confetti-piece:nth-child(9) { left: 90%; background: #2563eb; animation-delay: 1.6s; }
+    
+    @keyframes fall {
+      0% { top: -10px; transform: rotate(0deg); }
+      100% { top: 100vh; transform: rotate(360deg); }
+    }
+  </style>
+</head>
+<body>
+  <div class="confetti">
+    <div class="confetti-piece"></div>
+    <div class="confetti-piece"></div>
+    <div class="confetti-piece"></div>
+    <div class="confetti-piece"></div>
+    <div class="confetti-piece"></div>
+    <div class="confetti-piece"></div>
+    <div class="confetti-piece"></div>
+    <div class="confetti-piece"></div>
+    <div class="confetti-piece"></div>
+  </div>
+  
+  <div class="container">
+    <div class="trophy">🏆</div>
+    <h1 class="title">You Won!</h1>
+    <p class="subtitle">Puzzle completed successfully</p>
+    
+    <div class="prize-card">
+      <p class="prize-label">Your Prize</p>
+      <p class="prize-amount">$1.78</p>
+    </div>
+    
+    <div class="stats-grid">
+      <div class="stat-card">
+        <p class="stat-value">08:42</p>
+        <p class="stat-label">Solve Time</p>
+      </div>
+      <div class="stat-card">
+        <p class="stat-value">#47</p>
+        <p class="stat-label">Today's Rank</p>
+      </div>
+      <div class="stat-card">
+        <p class="stat-value">1</p>
+        <p class="stat-label">Mistakes</p>
+      </div>
+      <div class="stat-card">
+        <p class="stat-value">0</p>
+        <p class="stat-label">Reveals Used</p>
+      </div>
+    </div>
+    
+    <div class="streak-card">
+      <p class="streak-label">Current Streak</p>
+      <p class="streak-value">🔥 13 Days</p>
+    </div>
+    
+    <div class="action-btns">
+      <button class="share-btn">📤 Share</button>
+      <button class="home-btn">🏠 Home</button>
+    </div>
+  </div>
+  
+  <nav class="bottom-nav">
+    <div class="nav-item">
+      <span>🏠</span>
+      <span>Home</span>
+    </div>
+    <div class="nav-item active">
+      <span>🧩</span>
+      <span>Play</span>
+    </div>
+    <div class="nav-item">
+      <span>🏆</span>
+      <span>Ranks</span>
+    </div>
+    <div class="nav-item">
+      <span>👤</span>
+      <span>Profile</span>
+    </div>
+  </nav>
+</body>
+</html>
+
+

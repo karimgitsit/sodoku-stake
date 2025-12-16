@@ -120,6 +120,10 @@ export interface Database {
           prize_amount: number | null;
           refund_amount: number | null;
           prize_transaction_hash: string | null;
+          mistakes_count: number;
+          extra_lives_purchased: number;
+          max_mistakes: number;
+          game_locked: boolean;
           created_at: string;
           updated_at: string;
         };
@@ -138,6 +142,10 @@ export interface Database {
           prize_amount?: number | null;
           refund_amount?: number | null;
           prize_transaction_hash?: string | null;
+          mistakes_count?: number;
+          extra_lives_purchased?: number;
+          max_mistakes?: number;
+          game_locked?: boolean;
           created_at?: string;
           updated_at?: string;
         };
@@ -156,6 +164,10 @@ export interface Database {
           prize_amount?: number | null;
           refund_amount?: number | null;
           prize_transaction_hash?: string | null;
+          mistakes_count?: number;
+          extra_lives_purchased?: number;
+          max_mistakes?: number;
+          game_locked?: boolean;
           created_at?: string;
           updated_at?: string;
         };
@@ -280,6 +292,35 @@ export interface Database {
           created_at?: string;
         };
       };
+      extra_life_transactions: {
+        Row: {
+          id: string;
+          user_id: string;
+          game_entry_id: string;
+          puzzle_date: string;
+          transaction_hash: string | null;
+          amount: number;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          user_id: string;
+          game_entry_id: string;
+          puzzle_date: string;
+          transaction_hash?: string | null;
+          amount?: number;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          user_id?: string;
+          game_entry_id?: string;
+          puzzle_date?: string;
+          transaction_hash?: string | null;
+          amount?: number;
+          created_at?: string;
+        };
+      };
     };
     Views: {
       [_ in never]: never;
@@ -317,4 +358,7 @@ export type RevealTransactionInsert = Database['public']['Tables']['reveal_trans
 export type ReferralEarning = Database['public']['Tables']['referral_earnings']['Row'];
 export type ReferralEarningInsert = Database['public']['Tables']['referral_earnings']['Insert'];
 export type ReferralEarningUpdate = Database['public']['Tables']['referral_earnings']['Update'];
+
+export type ExtraLifeTransaction = Database['public']['Tables']['extra_life_transactions']['Row'];
+export type ExtraLifeTransactionInsert = Database['public']['Tables']['extra_life_transactions']['Insert'];
 

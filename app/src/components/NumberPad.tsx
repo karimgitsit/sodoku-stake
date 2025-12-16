@@ -7,6 +7,7 @@ import { payRevealFee } from '@/lib/worldcoin';
 export function NumberPad() {
   const { 
     setNumber, 
+    setNumberWithValidation,
     clearCell, 
     toggleNotesMode, 
     undo, 
@@ -14,14 +15,16 @@ export function NumberPad() {
     selectedCell, 
     puzzle, 
     puzzleUserId,
-    puzzleDate 
+    puzzleDate,
+    gameLocked
   } = useGameStore();
   
   const [showHintConfirm, setShowHintConfirm] = useState(false);
   const [isProcessingReveal, setIsProcessingReveal] = useState(false);
   const [revealError, setRevealError] = useState<string | null>(null);
+  const [isValidating, setIsValidating] = useState(false);
 
-  const isDisabled = !selectedCell;
+  const isDisabled = !selectedCell || gameLocked;
 
   const handleHint = () => {
     if (!selectedCell || !puzzle) return;
@@ -131,14 +134,26 @@ export function NumberPad() {
         {[1, 2, 3, 4, 5, 6, 7, 8, 9].map((num) => (
           <button
             key={num}
-            onClick={() => setNumber(num)}
-            disabled={isDisabled}
+            onClick={async () => {
+              if (isDisabled || isValidating) return;
+              
+              // Use validation for non-notes mode
+              if (!notesMode) {
+                setIsValidating(true);
+                await setNumberWithValidation(num);
+                setIsValidating(false);
+              } else {
+                // Notes mode doesn't need validation
+                setNumber(num);
+              }
+            }}
+            disabled={isDisabled || isValidating}
             className={`
               aspect-square flex items-center justify-center
               bg-card border border-border rounded-lg
               text-xl font-semibold
               transition-all duration-150
-              ${isDisabled ? 'opacity-50 cursor-not-allowed' : 'hover:border-primary active:scale-95 active:bg-primary active:text-white'}
+              ${isDisabled || isValidating ? 'opacity-50 cursor-not-allowed' : 'hover:border-primary active:scale-95 active:bg-primary active:text-white'}
             `}
           >
             {num}

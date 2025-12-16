@@ -20,13 +20,22 @@ interface GameState {
   // Server-side puzzle info
   puzzleDate: string | null;
   puzzleUserId: string | null;
+  gameEntryId: string | null;
+  
+  // Mistakes tracking
+  mistakesCount: number;
+  maxMistakes: number;
+  gameLocked: boolean;
+  errorCells: Set<string>; // Set of "row,col" strings for cells with errors
+  lastMistakeMessage: string | null;
   
   // Actions
   setPuzzle: (puzzle: number[][], solution: number[][]) => void;
-  setPuzzleFromServer: (puzzle: number[][], date: string, userId: string) => void;
+  setPuzzleFromServer: (puzzle: number[][], date: string, userId: string, entryId?: string) => void;
   selectCell: (row: number, col: number) => void;
   clearSelection: () => void;
   setNumber: (num: number) => void;
+  setNumberWithValidation: (num: number) => Promise<{ correct: boolean; message?: string }>;
   clearCell: () => void;
   toggleNotesMode: () => void;
   toggleNote: (num: number) => void;
@@ -35,6 +44,13 @@ interface GameState {
   submitSolution: () => Promise<{ correct: boolean; message: string }>;
   resetGame: () => void;
   getCurrentGrid: () => number[][] | null;
+  
+  // Mistakes actions
+  setMistakesState: (state: { mistakesCount: number; maxMistakes: number; gameLocked: boolean }) => void;
+  addErrorCell: (row: number, col: number) => void;
+  removeErrorCell: (row: number, col: number) => void;
+  setLastMistakeMessage: (message: string | null) => void;
+  unlockGame: () => void;
 
   // History for undo
   history: SudokuGrid[];
@@ -118,6 +134,14 @@ export const useGameStore = create<GameState>((set, get) => ({
   // Server-side puzzle info
   puzzleDate: null,
   puzzleUserId: null,
+  gameEntryId: null,
+  
+  // Mistakes tracking
+  mistakesCount: 0,
+  maxMistakes: 3,
+  gameLocked: false,
+  errorCells: new Set<string>(),
+  lastMistakeMessage: null,
 
   // History
   history: [],
@@ -143,17 +167,28 @@ export const useGameStore = create<GameState>((set, get) => ({
     startTime: Date.now(),
     gameStatus: 'playing',
     history: [],
+    mistakesCount: 0,
+    maxMistakes: 3,
+    gameLocked: false,
+    errorCells: new Set<string>(),
+    lastMistakeMessage: null,
   }),
 
   // Set puzzle from server (no solution - validation is server-side)
-  setPuzzleFromServer: (puzzle, date, userId) => set({
+  setPuzzleFromServer: (puzzle, date, userId, entryId) => set({
     puzzle: numberGridToCellGrid(puzzle),
     solution: null, // Server keeps the solution secret
     puzzleDate: date,
     puzzleUserId: userId,
+    gameEntryId: entryId || null,
     startTime: Date.now(),
     gameStatus: 'playing',
     history: [],
+    mistakesCount: 0,
+    maxMistakes: 3,
+    gameLocked: false,
+    errorCells: new Set<string>(),
+    lastMistakeMessage: null,
   }),
 
   // Get current grid as number array for submission
@@ -223,8 +258,8 @@ export const useGameStore = create<GameState>((set, get) => ({
   clearSelection: () => set({ selectedCell: null }),
 
   setNumber: (num) => {
-    const { puzzle, selectedCell, notesMode } = get();
-    if (!puzzle || !selectedCell) return;
+    const { puzzle, selectedCell, notesMode, gameLocked } = get();
+    if (!puzzle || !selectedCell || gameLocked) return;
 
     const { row, col } = selectedCell;
     if (puzzle[row][col].isGiven) return;
@@ -237,11 +272,96 @@ export const useGameStore = create<GameState>((set, get) => ({
       const newPuzzle = cloneGrid(puzzle);
       newPuzzle[row][col].value = num;
       newPuzzle[row][col].notes.clear();
-      
-      // Don't highlight errors - players shouldn't get hints about wrong answers
       newPuzzle[row][col].hasError = false;
       
-      set({ puzzle: newPuzzle });
+      // Remove from error cells if it was there
+      const errorCells = new Set(get().errorCells);
+      errorCells.delete(`${row},${col}`);
+      
+      set({ puzzle: newPuzzle, errorCells });
+    }
+  },
+
+  // Set number with server validation - returns validation result
+  setNumberWithValidation: async (num) => {
+    const { puzzle, selectedCell, notesMode, gameLocked, puzzleUserId } = get();
+    if (!puzzle || !selectedCell || gameLocked) {
+      return { correct: false, message: gameLocked ? 'Game is locked' : 'No cell selected' };
+    }
+
+    const { row, col } = selectedCell;
+    if (puzzle[row][col].isGiven) {
+      return { correct: true };
+    }
+
+    // If in notes mode, just toggle the note without validation
+    if (notesMode) {
+      get().toggleNote(num);
+      return { correct: true };
+    }
+
+    get().pushHistory();
+
+    // Optimistically update the cell
+    const newPuzzle = cloneGrid(puzzle);
+    newPuzzle[row][col].value = num;
+    newPuzzle[row][col].notes.clear();
+    set({ puzzle: newPuzzle });
+
+    // Validate with server
+    try {
+      const response = await fetch('/api/puzzle/validate-cell', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          userId: puzzleUserId,
+          row,
+          col,
+          value: num,
+        }),
+      });
+
+      const data = await response.json();
+
+      if (!data.correct) {
+        // Mark cell as error
+        const errorPuzzle = cloneGrid(get().puzzle!);
+        errorPuzzle[row][col].hasError = true;
+        
+        const errorCells = new Set(get().errorCells);
+        errorCells.add(`${row},${col}`);
+        
+        set({
+          puzzle: errorPuzzle,
+          errorCells,
+          mistakesCount: data.mistakesCount,
+          maxMistakes: data.maxMistakes,
+          gameLocked: data.gameLocked,
+          lastMistakeMessage: data.message,
+          gameStatus: data.gameLocked ? 'locked' : get().gameStatus,
+        });
+      } else {
+        // Remove from error cells if correct (in case user corrected a mistake)
+        const errorCells = new Set(get().errorCells);
+        errorCells.delete(`${row},${col}`);
+        
+        const correctPuzzle = cloneGrid(get().puzzle!);
+        correctPuzzle[row][col].hasError = false;
+        
+        set({
+          puzzle: correctPuzzle,
+          errorCells,
+          lastMistakeMessage: null,
+        });
+      }
+
+      return {
+        correct: data.correct,
+        message: data.message,
+      };
+    } catch (error) {
+      console.error('Error validating cell:', error);
+      return { correct: false, message: 'Failed to validate cell' };
     }
   },
 
@@ -258,7 +378,12 @@ export const useGameStore = create<GameState>((set, get) => ({
     newPuzzle[row][col].value = null;
     newPuzzle[row][col].notes.clear();
     newPuzzle[row][col].hasError = false;
-    set({ puzzle: newPuzzle });
+    
+    // Remove from error cells set
+    const errorCells = new Set(get().errorCells);
+    errorCells.delete(`${row},${col}`);
+    
+    set({ puzzle: newPuzzle, errorCells });
   },
 
   toggleNotesMode: () => set((state) => ({ notesMode: !state.notesMode })),
@@ -325,6 +450,40 @@ export const useGameStore = create<GameState>((set, get) => ({
     history: [],
     puzzleDate: null,
     puzzleUserId: null,
+    gameEntryId: null,
+    mistakesCount: 0,
+    maxMistakes: 3,
+    gameLocked: false,
+    errorCells: new Set<string>(),
+    lastMistakeMessage: null,
+  }),
+
+  // Mistakes actions
+  setMistakesState: (state) => set({
+    mistakesCount: state.mistakesCount,
+    maxMistakes: state.maxMistakes,
+    gameLocked: state.gameLocked,
+    gameStatus: state.gameLocked ? 'locked' : get().gameStatus,
+  }),
+
+  addErrorCell: (row, col) => {
+    const errorCells = new Set(get().errorCells);
+    errorCells.add(`${row},${col}`);
+    set({ errorCells });
+  },
+
+  removeErrorCell: (row, col) => {
+    const errorCells = new Set(get().errorCells);
+    errorCells.delete(`${row},${col}`);
+    set({ errorCells });
+  },
+
+  setLastMistakeMessage: (message) => set({ lastMistakeMessage: message }),
+
+  unlockGame: () => set({
+    gameLocked: false,
+    gameStatus: 'playing',
+    lastMistakeMessage: null,
   }),
 
   setUserInfo: (info) => set({

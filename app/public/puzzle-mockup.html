@@ -1,0 +1,370 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Puzzle Screen Mockup</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+    
+    :root {
+      --background: #FAF7F2;
+      --foreground: #1a1a1a;
+      --primary: #2563eb;
+      --primary-dark: #1d4ed8;
+      --secondary: #f1ebe4;
+      --accent: #dc2626;
+      --success: #16a34a;
+      --warning: #d97706;
+      --card: #ffffff;
+      --card-hover: #f8f5f0;
+      --border: #e5e0d8;
+      --muted: #6b7280;
+    }
+    
+    body {
+      font-family: 'Space Grotesk', -apple-system, BlinkMacSystemFont, sans-serif;
+      background: var(--background);
+      color: var(--foreground);
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+    
+    .container {
+      flex: 1;
+      padding: 12px;
+      padding-top: 40px;
+      padding-bottom: 70px;
+      display: flex;
+      flex-direction: column;
+    }
+    
+    .header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 8px;
+    }
+    
+    .timer {
+      font-size: 1.25rem;
+      font-weight: 700;
+      font-family: monospace;
+      color: var(--primary);
+    }
+    
+    .difficulty {
+      background: var(--accent);
+      color: white;
+      padding: 4px 12px;
+      border-radius: 999px;
+      font-size: 0.7rem;
+      font-weight: 600;
+    }
+    
+    .mistakes {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 0.8rem;
+      color: var(--accent);
+      font-weight: 600;
+    }
+    
+    .sudoku-grid {
+      display: grid;
+      grid-template-columns: repeat(9, 1fr);
+      gap: 1px;
+      background: var(--border);
+      border: 2px solid var(--primary);
+      border-radius: 8px;
+      overflow: hidden;
+      margin-bottom: 10px;
+    }
+    
+    .cell {
+      aspect-ratio: 1;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: var(--card);
+      font-size: 1.1rem;
+      font-weight: 600;
+      color: var(--foreground);
+    }
+    
+    .cell.given {
+      color: var(--muted);
+      font-weight: 500;
+    }
+    
+    .cell.user-input {
+      color: var(--primary);
+    }
+    
+    .cell.selected {
+      background: var(--primary);
+      color: white;
+    }
+    
+    .cell.error {
+      background: rgba(220, 38, 38, 0.2);
+      color: var(--accent);
+    }
+    
+    /* 3x3 borders */
+    .cell:nth-child(3n) {
+      border-right: 2px solid var(--primary);
+    }
+    .cell:nth-child(9n) {
+      border-right: none;
+    }
+    .cell:nth-child(n+19):nth-child(-n+27),
+    .cell:nth-child(n+46):nth-child(-n+54) {
+      border-bottom: 2px solid var(--primary);
+    }
+    
+    .number-pad {
+      display: grid;
+      grid-template-columns: repeat(5, 1fr);
+      gap: 6px;
+      margin-bottom: 8px;
+    }
+    
+    .num-btn {
+      aspect-ratio: 1;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      font-size: 1.25rem;
+      font-weight: 600;
+      color: var(--foreground);
+    }
+    
+    .num-btn.active {
+      background: var(--primary);
+      color: white;
+      border-color: var(--primary);
+    }
+    
+    .action-btns {
+      display: flex;
+      gap: 6px;
+    }
+    
+    .action-btn {
+      flex: 1;
+      padding: 10px 8px;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      font-size: 0.75rem;
+      font-weight: 500;
+      color: var(--foreground);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 4px;
+    }
+    
+    .action-btn.notes-active {
+      background: var(--warning);
+      color: white;
+      border-color: var(--warning);
+    }
+    
+    .submit-btn {
+      width: 100%;
+      padding: 14px;
+      background: var(--success);
+      color: white;
+      border: none;
+      border-radius: 14px;
+      font-size: 1rem;
+      font-weight: 700;
+      margin-top: 10px;
+    }
+    
+    .bottom-nav {
+      position: fixed;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      background: var(--card);
+      border-top: 1px solid var(--border);
+      padding: 6px 0;
+      padding-bottom: 16px;
+      display: flex;
+      justify-content: space-around;
+    }
+    
+    .nav-item {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      color: var(--muted);
+      font-size: 0.75rem;
+    }
+    
+    .nav-item.active {
+      color: var(--primary);
+    }
+    
+    .nav-item span:first-child {
+      font-size: 1.5rem;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <div class="timer">05:42</div>
+      <div class="difficulty">HARD</div>
+      <div class="mistakes">❌ 1/3</div>
+    </div>
+    
+    <div class="sudoku-grid">
+      <!-- Row 1 -->
+      <div class="cell given">5</div>
+      <div class="cell given">3</div>
+      <div class="cell user-input">4</div>
+      <div class="cell"></div>
+      <div class="cell given">7</div>
+      <div class="cell"></div>
+      <div class="cell"></div>
+      <div class="cell"></div>
+      <div class="cell"></div>
+      <!-- Row 2 -->
+      <div class="cell given">6</div>
+      <div class="cell"></div>
+      <div class="cell"></div>
+      <div class="cell given">1</div>
+      <div class="cell given">9</div>
+      <div class="cell given">5</div>
+      <div class="cell"></div>
+      <div class="cell"></div>
+      <div class="cell"></div>
+      <!-- Row 3 -->
+      <div class="cell"></div>
+      <div class="cell given">9</div>
+      <div class="cell given">8</div>
+      <div class="cell"></div>
+      <div class="cell"></div>
+      <div class="cell"></div>
+      <div class="cell"></div>
+      <div class="cell given">6</div>
+      <div class="cell"></div>
+      <!-- Row 4 -->
+      <div class="cell given">8</div>
+      <div class="cell"></div>
+      <div class="cell"></div>
+      <div class="cell"></div>
+      <div class="cell given">6</div>
+      <div class="cell"></div>
+      <div class="cell"></div>
+      <div class="cell"></div>
+      <div class="cell given">3</div>
+      <!-- Row 5 -->
+      <div class="cell given">4</div>
+      <div class="cell"></div>
+      <div class="cell"></div>
+      <div class="cell given">8</div>
+      <div class="cell selected">5</div>
+      <div class="cell given">3</div>
+      <div class="cell"></div>
+      <div class="cell"></div>
+      <div class="cell given">1</div>
+      <!-- Row 6 -->
+      <div class="cell given">7</div>
+      <div class="cell"></div>
+      <div class="cell"></div>
+      <div class="cell"></div>
+      <div class="cell given">2</div>
+      <div class="cell"></div>
+      <div class="cell"></div>
+      <div class="cell"></div>
+      <div class="cell given">6</div>
+      <!-- Row 7 -->
+      <div class="cell"></div>
+      <div class="cell given">6</div>
+      <div class="cell"></div>
+      <div class="cell"></div>
+      <div class="cell"></div>
+      <div class="cell"></div>
+      <div class="cell user-input">2</div>
+      <div class="cell given">8</div>
+      <div class="cell"></div>
+      <!-- Row 8 -->
+      <div class="cell"></div>
+      <div class="cell"></div>
+      <div class="cell"></div>
+      <div class="cell given">4</div>
+      <div class="cell given">1</div>
+      <div class="cell given">9</div>
+      <div class="cell"></div>
+      <div class="cell"></div>
+      <div class="cell given">5</div>
+      <!-- Row 9 -->
+      <div class="cell"></div>
+      <div class="cell"></div>
+      <div class="cell"></div>
+      <div class="cell"></div>
+      <div class="cell given">8</div>
+      <div class="cell"></div>
+      <div class="cell user-input">1</div>
+      <div class="cell given">7</div>
+      <div class="cell given">9</div>
+    </div>
+    
+    <div class="number-pad">
+      <div class="num-btn">1</div>
+      <div class="num-btn">2</div>
+      <div class="num-btn">3</div>
+      <div class="num-btn">4</div>
+      <div class="num-btn active">5</div>
+      <div class="num-btn">6</div>
+      <div class="num-btn">7</div>
+      <div class="num-btn">8</div>
+      <div class="num-btn">9</div>
+      <div class="num-btn">⌫</div>
+    </div>
+    
+    <div class="action-btns">
+      <div class="action-btn">↩️ Undo</div>
+      <div class="action-btn">📝 Notes</div>
+      <div class="action-btn">💡 Reveal $0.20</div>
+    </div>
+    
+    <button class="submit-btn">✅ Submit Solution</button>
+  </div>
+  
+  <nav class="bottom-nav">
+    <div class="nav-item">
+      <span>🏠</span>
+      <span>Home</span>
+    </div>
+    <div class="nav-item active">
+      <span>🧩</span>
+      <span>Play</span>
+    </div>
+    <div class="nav-item">
+      <span>🏆</span>
+      <span>Ranks</span>
+    </div>
+    <div class="nav-item">
+      <span>👤</span>
+      <span>Profile</span>
+    </div>
+  </nav>
+</body>
+</html>
+

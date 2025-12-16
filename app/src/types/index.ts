@@ -19,6 +19,9 @@ export interface Cell {
 export type SudokuGrid = Cell[][];
 
 // App state
-export type GameStatus = 'not_started' | 'paying' | 'playing' | 'won' | 'lost';
+export type GameStatus = 'not_started' | 'paying' | 'playing' | 'won' | 'lost' | 'locked';
 export type AppScreen = 'home' | 'puzzle' | 'results' | 'leaderboard' | 'profile';
+
+// Payment types
+export type PaymentType = 'entry' | 'reveal' | 'extra_life';
 

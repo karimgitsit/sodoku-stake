@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getPaymentReference, updatePaymentReference } from '../initiate/route';
-import { getOrCreateUser, createGameEntry, generateVariantSeed, getUserEntry, recordReveal, getUserReferrer, recordReferralEarning, getTodayStats, TaxRate } from '@/lib/db';
+import { getOrCreateUser, createGameEntry, generateVariantSeed, getUserEntry, recordReveal, getUserReferrer, recordReferralEarning, getTodayStats, TaxRate, addExtraLife, recordExtraLifePurchase } from '@/lib/db';
 import { getTodayDate } from '@/lib/supabase';
 import { getOrCreateDailyPuzzle } from '@/lib/db';
 
@@ -192,6 +192,8 @@ export async function POST(request: NextRequest) {
     // Process based on payment type
     if (paymentRef.type === 'entry') {
       return await handleEntryPayment(paymentRef, transaction_id, walletAddressFromTx);
+    } else if (paymentRef.type === 'extra_life') {
+      return await handleExtraLifePayment(paymentRef, transaction_id, walletAddressFromTx);
     } else {
       return await handleRevealPayment(paymentRef, transaction_id, walletAddressFromTx);
     }
@@ -340,6 +342,60 @@ async function handleRevealPayment(
     value: mappedValue,
     row,
     col,
+  });
+}
+
+/**
+ * Handle a confirmed extra life payment - unlock the game and add an extra life
+ */
+async function handleExtraLifePayment(
+  paymentRef: {
+    userId: string;
+    puzzleDate: string;
+    gameEntryId?: string;
+    username?: string;
+    walletAddress?: string;
+  },
+  transactionId: string,
+  walletAddressFromTx?: string
+) {
+  const { userId, puzzleDate, gameEntryId, username } = paymentRef;
+  // Prefer wallet address from transaction (more reliable) over MiniKit
+  const walletAddress = walletAddressFromTx || paymentRef.walletAddress;
+
+  if (!gameEntryId) {
+    return NextResponse.json(
+      { error: 'Missing game entry ID' },
+      { status: 400 }
+    );
+  }
+
+  // Get user (with wallet address from MiniKit)
+  const user = await getOrCreateUser(userId, username, walletAddress);
+
+  // Verify the game entry belongs to this user
+  const entry = await getUserEntry(user.id, puzzleDate);
+  if (!entry || entry.id !== gameEntryId) {
+    return NextResponse.json(
+      { error: 'Invalid game entry' },
+      { status: 400 }
+    );
+  }
+
+  // Add the extra life
+  const result = await addExtraLife(gameEntryId);
+
+  // Record the extra life purchase
+  await recordExtraLifePurchase(user.id, gameEntryId, puzzleDate, transactionId);
+
+  console.log(`[Payment] Extra life confirmed: user=${user.id.substring(0, 16)}..., maxMistakes=${result.maxMistakes}`);
+
+  return NextResponse.json({
+    success: true,
+    message: 'Extra life purchased! You can continue playing.',
+    mistakesCount: result.mistakesCount,
+    maxMistakes: result.maxMistakes,
+    gameLocked: result.gameLocked,
   });
 }
 

@@ -24,12 +24,36 @@ import type {
 // IN-MEMORY FALLBACK (when Supabase is not configured)
 // =============================================================================
 
-const memoryCache = {
+// Use globalThis to persist memory cache across hot reloads in development
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const globalForDb = globalThis as unknown as {
+  memoryCache: {
+    puzzles: Map<string, { puzzle: number[][], solution: number[][], difficulty: string }>;
+    users: Map<string, User>;
+    entries: Map<string, GameEntry>;
+    referralEarnings: Map<string, ReferralEarning>;
+  } | undefined;
+};
+
+const memoryCache = globalForDb.memoryCache ?? {
   puzzles: new Map<string, { puzzle: number[][], solution: number[][], difficulty: string }>(),
   users: new Map<string, User>(),
   entries: new Map<string, GameEntry>(),
   referralEarnings: new Map<string, ReferralEarning>(),
 };
+
+if (process.env.NODE_ENV === 'development') {
+  globalForDb.memoryCache = memoryCache;
+}
+
+// Set to true to use mock data in development (avoids Supabase RLS issues)
+// Set to false to use real Supabase data in development
+const FORCE_MEMORY_IN_DEV = false;
+
+function getDb() {
+  if (FORCE_MEMORY_IN_DEV) return null;
+  return getServerClient();
+}
 
 // =============================================================================
 // USER OPERATIONS
@@ -40,7 +64,7 @@ export async function getOrCreateUser(
   username?: string,
   walletAddress?: string
 ): Promise<User> {
-  const supabase = getServerClient();
+  const supabase = getDb();
   
   if (!supabase) {
     let user = memoryCache.users.get(worldIdHash);
@@ -122,7 +146,7 @@ export async function getOrCreateUser(
 }
 
 export async function getUserById(userId: string): Promise<User | null> {
-  const supabase = getServerClient();
+  const supabase = getDb();
   
   if (!supabase) {
     return memoryCache.users.get(userId) || null;
@@ -135,7 +159,7 @@ export async function getUserById(userId: string): Promise<User | null> {
 }
 
 export async function updateUser(userId: string, updates: UserUpdate): Promise<User | null> {
-  const supabase = getServerClient();
+  const supabase = getDb();
   
   if (!supabase) {
     const user = memoryCache.users.get(userId);
@@ -206,7 +230,7 @@ function selectDailyDifficulty(date: string): Difficulty {
 export async function getOrCreateDailyPuzzle(
   date: string = getTodayDate()
 ): Promise<{ puzzle: number[][], solution: number[][], difficulty: string, puzzleId: string }> {
-  const supabase = getServerClient();
+  const supabase = getDb();
   
   // Select difficulty based on the date (deterministic per day)
   const selectedDifficulty = selectDailyDifficulty(date);
@@ -285,7 +309,7 @@ export async function createGameEntry(
   variantSeed: string,
   transactionHash?: string
 ): Promise<GameEntry> {
-  const supabase = getServerClient();
+  const supabase = getDb();
   
   if (!supabase) {
     const entry: GameEntry = {
@@ -303,6 +327,10 @@ export async function createGameEntry(
       prize_amount: null,
       refund_amount: null,
       prize_transaction_hash: null,
+      mistakes_count: 0,
+      extra_lives_purchased: 0,
+      max_mistakes: 3,
+      game_locked: false,
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     };
@@ -334,7 +362,7 @@ export async function createGameEntry(
 }
 
 export async function getUserEntry(userId: string, puzzleDate: string): Promise<GameEntry | null> {
-  const supabase = getServerClient();
+  const supabase = getDb();
   
   if (!supabase) {
     const entryId = `entry_${userId}_${puzzleDate}`;
@@ -354,7 +382,7 @@ export async function getUserEntry(userId: string, puzzleDate: string): Promise<
 }
 
 export async function markEntryAsWon(entryId: string, solveTimeSeconds: number): Promise<GameEntry | null> {
-  const supabase = getServerClient();
+  const supabase = getDb();
   
   const updates: GameEntryUpdate = {
     status: 'won',
@@ -387,7 +415,7 @@ export async function markEntryAsWon(entryId: string, solveTimeSeconds: number):
 }
 
 export async function markEntryAsLost(entryId: string): Promise<GameEntry | null> {
-  const supabase = getServerClient();
+  const supabase = getDb();
   
   if (!supabase) {
     const entry = memoryCache.entries.get(entryId);
@@ -413,6 +441,158 @@ export async function markEntryAsLost(entryId: string): Promise<GameEntry | null
   }
   
   return data as GameEntry;
+}
+
+// =============================================================================
+// MISTAKES TRACKING OPERATIONS
+// =============================================================================
+
+export interface MistakeResult {
+  mistakesCount: number;
+  maxMistakes: number;
+  gameLocked: boolean;
+}
+
+/**
+ * Record a mistake for a game entry and return the updated state.
+ */
+export async function recordMistake(entryId: string): Promise<MistakeResult> {
+  const supabase = getDb();
+  
+  if (!supabase) {
+    // In-memory fallback
+    const entry = memoryCache.entries.get(entryId);
+    if (!entry) {
+      return { mistakesCount: 0, maxMistakes: 3, gameLocked: false };
+    }
+    
+    // Increment mistakes
+    entry.mistakes_count = (entry.mistakes_count || 0) + 1;
+    entry.max_mistakes = entry.max_mistakes || 3;
+    entry.game_locked = entry.mistakes_count >= entry.max_mistakes;
+    entry.updated_at = new Date().toISOString();
+    
+    return {
+      mistakesCount: entry.mistakes_count,
+      maxMistakes: entry.max_mistakes,
+      gameLocked: entry.game_locked,
+    };
+  }
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const db = supabase as any;
+  
+  // First, get current state
+  const { data: currentEntry } = await db
+    .from('game_entries')
+    .select('mistakes_count, max_mistakes')
+    .eq('id', entryId)
+    .single();
+  
+  const currentMistakes = (currentEntry?.mistakes_count || 0) + 1;
+  const maxMistakes = currentEntry?.max_mistakes || 3;
+  const gameLocked = currentMistakes >= maxMistakes;
+  
+  // Update the entry
+  await db
+    .from('game_entries')
+    .update({ 
+      mistakes_count: currentMistakes,
+      game_locked: gameLocked,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', entryId);
+  
+  return {
+    mistakesCount: currentMistakes,
+    maxMistakes,
+    gameLocked,
+  };
+}
+
+/**
+ * Add an extra life to a game entry (called after $0.25 payment).
+ * Increases max_mistakes by 1 and unlocks the game if it was locked.
+ */
+export async function addExtraLife(entryId: string): Promise<MistakeResult> {
+  const supabase = getDb();
+  
+  if (!supabase) {
+    // In-memory fallback
+    const entry = memoryCache.entries.get(entryId);
+    if (!entry) {
+      return { mistakesCount: 0, maxMistakes: 4, gameLocked: false };
+    }
+    
+    entry.max_mistakes = (entry.max_mistakes || 3) + 1;
+    entry.extra_lives_purchased = (entry.extra_lives_purchased || 0) + 1;
+    entry.game_locked = (entry.mistakes_count || 0) >= entry.max_mistakes;
+    entry.updated_at = new Date().toISOString();
+    
+    return {
+      mistakesCount: entry.mistakes_count || 0,
+      maxMistakes: entry.max_mistakes,
+      gameLocked: entry.game_locked,
+    };
+  }
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const db = supabase as any;
+  
+  // First, get current state
+  const { data: currentEntry } = await db
+    .from('game_entries')
+    .select('mistakes_count, max_mistakes, extra_lives_purchased')
+    .eq('id', entryId)
+    .single();
+  
+  const currentMistakes = currentEntry?.mistakes_count || 0;
+  const newMaxMistakes = (currentEntry?.max_mistakes || 3) + 1;
+  const newExtraLives = (currentEntry?.extra_lives_purchased || 0) + 1;
+  const gameLocked = currentMistakes >= newMaxMistakes;
+  
+  // Update the entry
+  await db
+    .from('game_entries')
+    .update({ 
+      max_mistakes: newMaxMistakes,
+      extra_lives_purchased: newExtraLives,
+      game_locked: gameLocked,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', entryId);
+  
+  return {
+    mistakesCount: currentMistakes,
+    maxMistakes: newMaxMistakes,
+    gameLocked,
+  };
+}
+
+/**
+ * Record an extra life purchase transaction.
+ */
+export async function recordExtraLifePurchase(
+  userId: string,
+  gameEntryId: string,
+  puzzleDate: string,
+  transactionHash?: string
+): Promise<void> {
+  const supabase = getDb();
+  
+  if (!supabase) {
+    console.log(`[DB] Extra life purchase recorded (in-memory): user=${userId}, entry=${gameEntryId}`);
+    return;
+  }
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const db = supabase as any;
+  await db.from('extra_life_transactions').insert({
+    user_id: userId,
+    game_entry_id: gameEntryId,
+    puzzle_date: puzzleDate,
+    transaction_hash: transactionHash,
+  });
 }
 
 // =============================================================================
@@ -520,7 +700,7 @@ export async function getTodayStats(date: string = getTodayDate()): Promise<{
   taxRate: TaxRate;
   prizePerWinner: number;
 }> {
-  const supabase = getServerClient();
+  const supabase = getDb();
   
   if (!supabase) {
     // Mock data for development - simulates a scenario with 20% tax
@@ -571,7 +751,7 @@ export async function getTodayStats(date: string = getTodayDate()): Promise<{
 }
 
 export async function getLeaderboard(limit: number = 10): Promise<User[]> {
-  const supabase = getServerClient();
+  const supabase = getDb();
   if (!supabase) return [];
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -586,7 +766,7 @@ export async function getLeaderboard(limit: number = 10): Promise<User[]> {
 }
 
 export async function getFastestSolvers(date: string = getTodayDate(), limit: number = 10) {
-  const supabase = getServerClient();
+  const supabase = getDb();
   if (!supabase) return [];
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -614,7 +794,7 @@ export async function recordReveal(
   col: number,
   transactionHash?: string
 ): Promise<void> {
-  const supabase = getServerClient();
+  const supabase = getDb();
   
   if (!supabase) {
     console.log(`[DB] Reveal recorded (in-memory): user=${userId}, cell=[${row},${col}]`);
@@ -665,7 +845,7 @@ export function calculateReferralCommissionRate(taxRate: TaxRate): number {
  * Get user by their referral code
  */
 export async function getUserByReferralCode(referralCode: string): Promise<User | null> {
-  const supabase = getServerClient();
+  const supabase = getDb();
   
   if (!supabase) {
     // In-memory fallback: search through all users
@@ -692,7 +872,7 @@ export async function getUserByReferralCode(referralCode: string): Promise<User 
  * Set the referrer for a user (process referral link)
  */
 export async function setUserReferrer(userId: string, referralCode: string): Promise<boolean> {
-  const supabase = getServerClient();
+  const supabase = getDb();
   
   // Find the referrer
   const referrer = await getUserByReferralCode(referralCode);
@@ -787,7 +967,7 @@ export async function recordReferralEarning(
   const refereeSpend = sourceType === 'entry' ? ENTRY_FEE_AMOUNT : REVEAL_FEE_AMOUNT;
   const amount = refereeSpend * commissionRate;
   
-  const supabase = getServerClient();
+  const supabase = getDb();
   
   if (!supabase) {
     // In-memory fallback
@@ -875,7 +1055,7 @@ export async function recordReferralEarning(
  * Get referral earnings for a user (as referrer)
  */
 export async function getReferralEarnings(referrerId: string): Promise<ReferralEarning[]> {
-  const supabase = getServerClient();
+  const supabase = getDb();
   
   if (!supabase) {
     return Array.from(memoryCache.referralEarnings.values())
@@ -898,7 +1078,7 @@ export async function getReferralEarnings(referrerId: string): Promise<ReferralE
  * Get unpaid referral earnings for prize distribution
  */
 export async function getUnpaidReferralEarnings(date?: string): Promise<ReferralEarning[]> {
-  const supabase = getServerClient();
+  const supabase = getDb();
   
   if (!supabase) {
     let earnings = Array.from(memoryCache.referralEarnings.values())
@@ -933,7 +1113,7 @@ export async function markReferralEarningsPaid(
   earningIds: string[],
   transactionHash: string
 ): Promise<void> {
-  const supabase = getServerClient();
+  const supabase = getDb();
   
   if (!supabase) {
     for (const id of earningIds) {
@@ -966,7 +1146,7 @@ export async function getReferralStats(userId: string): Promise<{
   unpaidEarnings: number;
   recentEarnings: ReferralEarning[];
 }> {
-  const supabase = getServerClient();
+  const supabase = getDb();
   
   if (!supabase) {
     const user = memoryCache.users.get(userId);
@@ -1023,7 +1203,7 @@ export async function getReferralStats(userId: string): Promise<{
  * Get referral leaderboard (top earners from referrals)
  */
 export async function getReferralLeaderboard(limit: number = 10): Promise<User[]> {
-  const supabase = getServerClient();
+  const supabase = getDb();
   
   if (!supabase) {
     return Array.from(memoryCache.users.values())
@@ -1048,7 +1228,7 @@ export async function getReferralLeaderboard(limit: number = 10): Promise<User[]
  * Get the referrer ID for a user (if they were referred)
  */
 export async function getUserReferrer(userId: string): Promise<User | null> {
-  const supabase = getServerClient();
+  const supabase = getDb();
   
   if (!supabase) {
     const user = memoryCache.users.get(userId);

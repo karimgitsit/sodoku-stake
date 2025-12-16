@@ -165,8 +165,34 @@ body {
 }
 
 .sudoku-cell.error {
-  background: rgba(220, 38, 38, 0.15);
+  background: rgba(220, 38, 38, 0.2);
   color: var(--accent);
+  border: 2px solid var(--accent) !important;
+  animation: errorPulse 0.5s ease-in-out;
+}
+
+.sudoku-cell.error span {
+  font-weight: 700;
+}
+
+@keyframes errorPulse {
+  0% { transform: scale(1); }
+  25% { transform: scale(1.05); background: rgba(220, 38, 38, 0.35); }
+  50% { transform: scale(1); }
+  75% { transform: scale(1.05); background: rgba(220, 38, 38, 0.35); }
+  100% { transform: scale(1); }
+}
+
+@keyframes shake {
+  0%, 100% { transform: translateX(0); }
+  20% { transform: translateX(-3px); }
+  40% { transform: translateX(3px); }
+  60% { transform: translateX(-3px); }
+  80% { transform: translateX(3px); }
+}
+
+.animate-shake {
+  animation: shake 0.4s ease-in-out;
 }
 
 /* Notes styling is handled by the inner grid component, not via CSS class */
