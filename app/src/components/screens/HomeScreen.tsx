@@ -222,15 +222,15 @@ export function HomeScreen() {
         {/* Stats Grid */}
         <div className="grid grid-cols-3 gap-4 mb-4">
           <div className="text-center">
-            <p className="text-2xl font-bold">{todayPlayers || '--'}</p>
+            <p className="text-2xl font-bold">{todayPlayers > 0 ? todayPlayers : '0'}</p>
             <p className="text-xs text-muted">Players</p>
           </div>
           <div className="text-center">
-            <p className="text-2xl font-bold">{todaySuccessRate ? `${todaySuccessRate}%` : '--'}</p>
+            <p className="text-2xl font-bold">{todayPlayers > 0 ? `${todaySuccessRate}%` : '0%'}</p>
             <p className="text-xs text-muted">Failed</p>
           </div>
           <div className="text-center">
-            <p className="text-2xl font-bold text-success">${prizePool?.toFixed(2) || '10.00'}</p>
+            <p className="text-2xl font-bold text-success">${prizePool > 0 ? prizePool.toFixed(2) : '10.00'}</p>
             <p className="text-xs text-muted">Prize Pool</p>
           </div>
         </div>
@@ -303,14 +303,14 @@ export function HomeScreen() {
       <div className="mt-auto pt-4">
         <div className="bg-card/50 border border-border rounded-xl p-3">
           <p className="text-xs text-muted mb-1">Yesterday&apos;s Result</p>
-          {yesterdayStats ? (
+          {yesterdayStats && yesterdayStats.prizePerWinner > 0 ? (
             <p className="text-sm">
               <span className="text-muted">{yesterdayStats.failureRate}% failed</span>
               <span className="mx-2">•</span>
               <span className="text-success">Winners earned ${yesterdayStats.prizePerWinner.toFixed(2)} each</span>
             </p>
           ) : (
-            <p className="text-sm text-muted">Loading...</p>
+            <p className="text-sm text-muted">No results yet — be the first to play!</p>
           )}
         </div>
       </div>

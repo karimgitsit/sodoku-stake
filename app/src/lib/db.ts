@@ -703,17 +703,14 @@ export async function getTodayStats(date: string = getTodayDate()): Promise<{
   const supabase = getDb();
   
   if (!supabase) {
-    // Mock data for development - simulates a scenario with 20% tax
-    const mockPlayers = 847;
-    const mockWinners = 398;
-    const mockTax = calculateTaxBreakdown(mockPlayers, mockWinners);
+    // No database configured - return empty stats (not fake data)
     return { 
-      players: mockPlayers, 
-      winners: mockWinners, 
-      pool: mockTax.prizePool, 
-      successRate: 47,
-      taxRate: mockTax.taxRate,
-      prizePerWinner: mockTax.prizePerWinner,
+      players: 0, 
+      winners: 0, 
+      pool: 10.00, // Minimum guaranteed pool
+      successRate: 0,
+      taxRate: 20,
+      prizePerWinner: 0,
     };
   }
   
@@ -1197,6 +1194,93 @@ export async function getReferralStats(userId: string): Promise<{
     unpaidEarnings,
     recentEarnings: (recentEarnings || []) as ReferralEarning[],
   };
+}
+
+/**
+ * Get streak leaderboard (users with longest current streaks)
+ */
+export async function getStreakLeaderboard(limit: number = 10): Promise<User[]> {
+  const supabase = getDb();
+  
+  if (!supabase) {
+    return Array.from(memoryCache.users.values())
+      .filter(u => (u.current_streak || 0) > 0)
+      .sort((a, b) => (b.current_streak || 0) - (a.current_streak || 0))
+      .slice(0, limit);
+  }
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const db = supabase as any;
+  const { data } = await db
+    .from('users')
+    .select('*')
+    .gt('current_streak', 0)
+    .order('current_streak', { ascending: false })
+    .limit(limit);
+  
+  return (data || []) as User[];
+}
+
+/**
+ * Get weekly earnings leaderboard (earnings from last 7 days based on won entries)
+ */
+export async function getWeeklyEarningsLeaderboard(limit: number = 10): Promise<Array<{ user: User; weeklyEarnings: number }>> {
+  const supabase = getDb();
+  
+  // Calculate date 7 days ago
+  const now = new Date();
+  const weekAgo = new Date(now);
+  weekAgo.setUTCDate(weekAgo.getUTCDate() - 7);
+  const weekAgoStr = `${weekAgo.getUTCFullYear()}-${String(weekAgo.getUTCMonth() + 1).padStart(2, '0')}-${String(weekAgo.getUTCDate()).padStart(2, '0')}`;
+  
+  if (!supabase) {
+    // In-memory: just return all-time for now as we don't track weekly in memory
+    const users = Array.from(memoryCache.users.values())
+      .filter(u => (u.total_earnings || 0) > 0)
+      .sort((a, b) => (b.total_earnings || 0) - (a.total_earnings || 0))
+      .slice(0, limit);
+    return users.map(u => ({ user: u, weeklyEarnings: u.total_earnings || 0 }));
+  }
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const db = supabase as any;
+  
+  // Get won entries from the past week with their prize amounts
+  const { data: weeklyWinners } = await db
+    .from('game_entries')
+    .select('user_id, prize_amount, users(*)')
+    .eq('status', 'won')
+    .gte('puzzle_date', weekAgoStr)
+    .not('prize_amount', 'is', null);
+  
+  if (!weeklyWinners || weeklyWinners.length === 0) {
+    return [];
+  }
+
+  // Aggregate earnings by user
+  const userEarnings = new Map<string, { user: User; total: number }>();
+  
+  for (const entry of weeklyWinners) {
+    if (!entry.users) continue;
+    const userId = entry.user_id;
+    const current = userEarnings.get(userId);
+    const prizeAmount = entry.prize_amount || 0;
+    
+    if (current) {
+      current.total += prizeAmount;
+    } else {
+      userEarnings.set(userId, { 
+        user: entry.users as User, 
+        total: prizeAmount 
+      });
+    }
+  }
+  
+  // Sort by weekly earnings and return top N
+  return Array.from(userEarnings.values())
+    .sort((a, b) => b.total - a.total)
+    .slice(0, limit)
+    .map(({ user, total }) => ({ user, weeklyEarnings: total }));
 }
 
 /**

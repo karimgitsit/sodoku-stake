@@ -37,12 +37,23 @@ export const REVEAL_FEE_USDC = tokenToDecimals(REVEAL_FEE_AMOUNT, Tokens.USDC).t
 export const EXTRA_LIFE_FEE_USDC = tokenToDecimals(EXTRA_LIFE_FEE_AMOUNT, Tokens.USDC).toString();
 
 // Wallet addresses - set these in environment variables
-// Platform wallet receives entry fees + reveals (forms prize pool)
+// Platform wallet receives entry fees (forms prize pool)
 // At midnight, prizes are distributed and remainder is swept to developer wallet
 export const PLATFORM_WALLET = process.env.NEXT_PUBLIC_PLATFORM_WALLET || '0x0000000000000000000000000000000000000000';
 
-// Developer wallet receives direct revenue (extra lives)
+// Developer wallet receives direct revenue (reveal fees, extra lives)
+// WARNING: If not set, defaults to burn address - TOTAL LOSS OF REVENUE!
 export const DEVELOPER_WALLET = process.env.NEXT_PUBLIC_DEVELOPER_WALLET || '0x0000000000000000000000000000000000000000';
+
+// Log a warning if wallets are using default (burn) addresses
+if (typeof window === 'undefined' && process.env.NODE_ENV === 'production') {
+  if (PLATFORM_WALLET === '0x0000000000000000000000000000000000000000') {
+    console.error('🚨 CRITICAL: NEXT_PUBLIC_PLATFORM_WALLET not set! Payments will be lost!');
+  }
+  if (DEVELOPER_WALLET === '0x0000000000000000000000000000000000000000') {
+    console.error('🚨 CRITICAL: NEXT_PUBLIC_DEVELOPER_WALLET not set! Revenue will be lost!');
+  }
+}
 
 // App ID from World Developer Portal
 export const APP_ID = process.env.NEXT_PUBLIC_APP_ID || 'app_staging_demo';
@@ -447,11 +458,13 @@ export async function payRevealFee(
 
   console.log('[Payment] Initiated reveal with reference:', initResult.reference);
 
-  // Step 2: Send payment via MiniKit
+  // Step 2: Send payment via MiniKit - Reveal fees go DIRECTLY to developer wallet
+  // (not prize pool, as per PRD section 5.4)
   const payResult = await sendPayment(
     initResult.reference!,
     initResult.tokenAmount!,
-    `Sodoku Stake - Reveal Cell`
+    `Sodoku Stake - Reveal Cell`,
+    DEVELOPER_WALLET // Revenue goes directly to developer, not platform wallet
   );
 
   if (!payResult.success) {

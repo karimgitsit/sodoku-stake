@@ -94,8 +94,8 @@ Follow these phases in order. Each phase builds on the previous.
 #### ~~A. Create Your Wallets~~
 | Variable | Purpose | How to Create |
 |----------|---------|---------------|
-| `NEXT_PUBLIC_PLATFORM_WALLET` | Receives entry fees ($1.00/entry) → prize pool, you keep 20% | Create Ethereum wallet in MetaMask |
-| `NEXT_PUBLIC_DEVELOPER_WALLET` | Receives reveal fees ($0.20/reveal) → 100% yours | Same wallet or separate one |
+| `NEXT_PUBLIC_PLATFORM_WALLET` | Receives entry fees ($1.00/entry) + extra lives ($0.25) → prize pool, you keep 20% after payouts | Create Ethereum wallet in MetaMask |
+| `NEXT_PUBLIC_DEVELOPER_WALLET` | Receives reveal fees ($0.20/reveal) directly → 100% yours immediately | Same wallet or separate one |
 
 > 💡 **Tip**: You can use the same wallet for both, or separate them for accounting.
 
