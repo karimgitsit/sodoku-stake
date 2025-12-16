@@ -89,10 +89,20 @@ export async function getOrCreateUser(
         updated_at: new Date().toISOString(),
       };
       memoryCache.users.set(worldIdHash, user);
-    } else if (walletAddress && !user.wallet_address) {
-      // Update wallet address if provided and not already set
-      user.wallet_address = walletAddress;
-      user.updated_at = new Date().toISOString();
+    } else {
+      // Update wallet address and/or username if provided and not already set
+      let updated = false;
+      if (walletAddress && !user.wallet_address) {
+        user.wallet_address = walletAddress;
+        updated = true;
+      }
+      if (username && !user.username) {
+        user.username = username;
+        updated = true;
+      }
+      if (updated) {
+        user.updated_at = new Date().toISOString();
+      }
     }
     return user;
   }
@@ -107,20 +117,34 @@ export async function getOrCreateUser(
     .single();
   
   if (existingUser) {
-    // Update wallet address if provided and user doesn't have one yet
-    if (walletAddress && !existingUser.wallet_address) {
+    // Check if we need to update wallet address or username
+    const needsWalletUpdate = walletAddress && !existingUser.wallet_address;
+    const needsUsernameUpdate = username && !existingUser.username;
+    
+    if (needsWalletUpdate || needsUsernameUpdate) {
+      const updates: { wallet_address?: string; username?: string; updated_at: string } = {
+        updated_at: new Date().toISOString(),
+      };
+      
+      if (needsWalletUpdate) {
+        updates.wallet_address = walletAddress;
+      }
+      if (needsUsernameUpdate) {
+        updates.username = username;
+      }
+      
       const { data: updatedUser } = await db
         .from('users')
-        .update({ 
-          wallet_address: walletAddress,
-          updated_at: new Date().toISOString(),
-        })
+        .update(updates)
         .eq('id', existingUser.id)
         .select()
         .single();
       
       if (updatedUser) {
-        console.log(`[DB] Updated wallet address for user ${existingUser.id.substring(0, 8)}...`);
+        const updateDetails = [];
+        if (needsWalletUpdate) updateDetails.push('wallet');
+        if (needsUsernameUpdate) updateDetails.push('username');
+        console.log(`[DB] Updated ${updateDetails.join(' and ')} for user ${existingUser.id.substring(0, 8)}...`);
         return updatedUser as User;
       }
     }

@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { useGameStore } from '@/store/gameStore';
+import { useWallet } from '@/components/MiniKitProvider';
 import { MiniKit } from '@worldcoin/minikit-js';
 
 // App configuration
@@ -33,7 +34,6 @@ interface NotificationPreferences {
 
 export function ProfileScreen() {
   const { 
-    username,
     currentStreak,
     hasStreakInsurance,
     referralCode: storeReferralCode,
@@ -41,6 +41,12 @@ export function ProfileScreen() {
     totalReferrals: storeTotalReferrals,
     puzzleUserId,
   } = useGameStore();
+  
+  // Get the actual username from MiniKit/World App
+  const { username: miniKitUsername } = useWallet();
+  
+  // Prefer MiniKit username, fallback to store or 'Anonymous'
+  const displayUsername = miniKitUsername || 'Anonymous';
 
   const [referralStats, setReferralStats] = useState<ReferralStats | null>(null);
   const [isLoading, setIsLoading] = useState(false);
@@ -238,7 +244,7 @@ export function ProfileScreen() {
         <div className="w-20 h-20 bg-primary/20 rounded-full flex items-center justify-center mx-auto mb-3">
           <span className="text-3xl">👤</span>
         </div>
-        <h1 className="text-xl font-bold">@{username || 'Anonymous'}</h1>
+        <h1 className="text-xl font-bold">@{displayUsername}</h1>
         <p className="text-sm text-muted">World ID Verified ✓</p>
       </div>
 

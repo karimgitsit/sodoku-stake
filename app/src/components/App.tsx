@@ -7,10 +7,12 @@ import { PuzzleScreen } from './screens/PuzzleScreen';
 import { ResultsScreen } from './screens/ResultsScreen';
 import { LeaderboardScreen } from './screens/LeaderboardScreen';
 import { ProfileScreen } from './screens/ProfileScreen';
+import { useWallet } from './MiniKitProvider';
 import { useEffect, useState } from 'react';
 
 export function App() {
   const { currentScreen, setUserInfo, setTodayStats } = useGameStore();
+  const { username: miniKitUsername, walletAddress: miniKitWalletAddress } = useWallet();
   const [referralProcessed, setReferralProcessed] = useState(false);
 
   // Handle incoming referral code from URL
@@ -48,39 +50,20 @@ export function App() {
     handleReferral();
   }, [referralProcessed]);
 
-  // Initialize with mock data
+  // Initialize user info from MiniKit when available
   useEffect(() => {
-    // TODO: Replace with actual World ID and API calls
-    // When user signs up, check for pending referral code
-    const pendingRefCode = localStorage.getItem('pendingReferralCode');
-    
+    // Set user info from MiniKit (or defaults)
+    // The actual values come from World App via MiniKitProvider
     setUserInfo({
-      username: 'player123',
-      walletAddress: '0x1234...5678',
-      streak: 12,
-      insurance: true, // Mock: user has earned and not yet used insurance
-      referralCode: 'STAKE1234', // User's own referral code
-      referralEarnings: 1.20,
-      totalReferrals: 3,
+      username: miniKitUsername || 'Player',
+      walletAddress: miniKitWalletAddress || '',
+      streak: 0, // Will be updated from API when user plays
+      insurance: false,
     });
 
-    setTodayStats({
-      players: 847,
-      successRate: 53, // 53% failed
-      pool: 677.60,
-    });
-    
-    // TODO: In production, after verifying World ID, process the pending referral
-    // if (pendingRefCode && userId) {
-    //   fetch('/api/referral/process', {
-    //     method: 'POST',
-    //     headers: { 'Content-Type': 'application/json' },
-    //     body: JSON.stringify({ userId, referralCode: pendingRefCode }),
-    //   }).then(() => {
-    //     localStorage.removeItem('pendingReferralCode');
-    //   });
-    // }
-  }, [setUserInfo, setTodayStats]);
+    // Stats will be fetched from API by HomeScreen
+    // Don't set fake mock data here
+  }, [setUserInfo, miniKitUsername, miniKitWalletAddress]);
 
   const renderScreen = () => {
     switch (currentScreen) {
