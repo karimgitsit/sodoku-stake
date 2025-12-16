@@ -155,8 +155,13 @@ export async function POST(request: NextRequest) {
           );
         }
       } catch (error) {
-        console.error('[Payment] Error checking existing entry:', error);
-        // Continue with payment initiation if check fails
+        // SECURITY: If we can't verify whether user already has an entry,
+        // we must fail the payment to prevent potential double charges
+        console.error('[Payment] Error checking existing entry - failing payment for safety:', error);
+        return NextResponse.json(
+          { error: 'Unable to verify game status. Please try again.' },
+          { status: 503 }
+        );
       }
     }
 
@@ -221,4 +226,3 @@ export async function POST(request: NextRequest) {
     );
   }
 }
-

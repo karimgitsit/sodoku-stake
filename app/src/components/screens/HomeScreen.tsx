@@ -402,7 +402,7 @@ export function HomeScreen() {
       {/* Play Button */}
       <button
         onClick={handlePlayClick}
-        disabled={gameStatus === 'won' || gameStatus === 'lost' || (step !== 'idle' && step !== 'restoring')}
+        disabled={gameStatus === 'won' || gameStatus === 'lost' || step !== 'idle'}
         className={`
           w-full py-4 rounded-2xl font-bold text-lg transition-all duration-200
           ${gameStatus === 'won' || gameStatus === 'lost'
