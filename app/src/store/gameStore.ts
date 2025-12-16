@@ -420,9 +420,21 @@ export const useGameStore = create<GameState>((set, get) => ({
     if (history.length === 0) return;
 
     const previousState = history[history.length - 1];
+    
+    // Rebuild errorCells from the restored puzzle state
+    const newErrorCells = new Set<string>();
+    for (let row = 0; row < 9; row++) {
+      for (let col = 0; col < 9; col++) {
+        if (previousState[row][col].hasError) {
+          newErrorCells.add(`${row},${col}`);
+        }
+      }
+    }
+    
     set({
       puzzle: previousState,
       history: history.slice(0, -1),
+      errorCells: newErrorCells,
     });
   },
 
