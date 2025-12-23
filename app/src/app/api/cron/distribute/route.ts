@@ -188,15 +188,25 @@ async function distributePrizes(puzzleDate: string): Promise<DistributionResult>
   
   const typedEntries = entries as unknown as EntryWithUser[];
   
-  // Calculate stats
+  // Connect to blockchain first to get actual balance
+  const provider = new ethers.JsonRpcProvider(RPC_URL);
+  const wallet = new ethers.Wallet(PAYOUT_WALLET_KEY, provider);
+  const usdc = new ethers.Contract(USDC_ADDRESS, USDC_ABI, wallet);
+  
+  // Get actual USDC balance in prize pool wallet
+  const balance = await withRetry(() => usdc.balanceOf(wallet.address));
+  const balanceUSDC = Number(ethers.formatUnits(balance, 6));
+  
+  console.log(`[Distribute] Prize pool balance: $${balanceUSDC.toFixed(2)} USDC`);
+  
+  // Count winners (status === 'won')
   const totalPlayers = typedEntries.length;
-  const totalPool = totalPlayers * ENTRY_FEE;
   const winners = typedEntries.filter(e => e.status === 'won');
-  const losers = typedEntries.filter(e => e.status === 'lost');
+  const nonWinners = typedEntries.filter(e => e.status !== 'won');
   const winnerCount = winners.length;
   
-  // Calculate dynamic tax rate
-  const winnerRatio = winnerCount / totalPlayers;
+  // Calculate dynamic platform fee based on winner ratio
+  const winnerRatio = totalPlayers > 0 ? winnerCount / totalPlayers : 0;
   let platformFeePercent: number;
   
   if (winnerRatio <= 0.80) {
@@ -207,24 +217,19 @@ async function distributePrizes(puzzleDate: string): Promise<DistributionResult>
     platformFeePercent = 0;
   }
   
-  const platformFee = totalPool * platformFeePercent;
-  const prizePool = totalPool - platformFee;
+  // Calculate prize distribution from ACTUAL balance
+  const platformFee = balanceUSDC * platformFeePercent;
+  const prizePool = balanceUSDC - platformFee;
   const payoutPerWinner = winnerCount > 0 ? prizePool / winnerCount : 0;
   
-  // Streak insurance
-  const insuranceRecipients = losers.filter(e => e.users.has_streak_insurance === true);
+  // Streak insurance - check non-winners (not just 'lost' status)
+  const insuranceRecipients = nonWinners.filter(e => e.users.has_streak_insurance === true);
   const insurancePayout = ENTRY_FEE * 0.50;
   
   console.log(`[Distribute] Players: ${totalPlayers}, Winners: ${winnerCount}, Tax: ${platformFeePercent * 100}%`);
+  console.log(`[Distribute] Prize per winner: $${payoutPerWinner.toFixed(2)}, Insurance recipients: ${insuranceRecipients.length}`);
   
-  // Connect to blockchain
-  const provider = new ethers.JsonRpcProvider(RPC_URL);
-  const wallet = new ethers.Wallet(PAYOUT_WALLET_KEY, provider);
-  const usdc = new ethers.Contract(USDC_ADDRESS, USDC_ABI, wallet);
-  
-  // Check balance (with retry for RPC reliability)
-  const balance = await withRetry(() => usdc.balanceOf(wallet.address));
-  const balanceUSDC = Number(ethers.formatUnits(balance, 6));
+  // Validate we have enough for payouts
   const totalNeeded = (winnerCount * payoutPerWinner) + (insuranceRecipients.length * insurancePayout);
   
   if (balanceUSDC < totalNeeded) {
@@ -337,7 +342,7 @@ async function distributePrizes(puzzleDate: string): Promise<DistributionResult>
     stats: {
       totalPlayers,
       winners: winnerCount,
-      losers: losers.length,
+      losers: nonWinners.length,
       taxRate: platformFeePercent * 100,
       prizePerWinner: payoutPerWinner,
       totalDistributed,
