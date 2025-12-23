@@ -131,13 +131,9 @@ export async function POST(request: NextRequest) {
   }
 }
 
-// Also support GET for manual testing (in development only)
+// Vercel cron jobs send GET requests, so we need to handle them
 export async function GET(request: NextRequest) {
-  if (process.env.NODE_ENV === 'production') {
-    return NextResponse.json({ error: 'Method not allowed' }, { status: 405 });
-  }
-  
-  // Redirect to POST handler
+  // Vercel cron jobs use GET - forward to main handler
   return POST(request);
 }
 
