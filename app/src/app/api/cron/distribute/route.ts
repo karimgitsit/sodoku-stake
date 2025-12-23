@@ -88,6 +88,18 @@ function calculateReferralCommissionRate(taxPercent: number): number {
 }
 
 /**
+ * Timeout wrapper - rejects if operation takes too long
+ */
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number, operation: string): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<T>((_, reject) => 
+      setTimeout(() => reject(new Error(`${operation} timed out after ${timeoutMs}ms`)), timeoutMs)
+    )
+  ]);
+}
+
+/**
  * Retry helper for blockchain transactions
  * Retries up to 3 times with exponential backoff
  */
@@ -243,19 +255,41 @@ async function distributePrizes(puzzleDate: string): Promise<DistributionResult>
   
   // Pay winners
   for (const winner of winners) {
-    if (!winner.users.wallet_address) {
+    const walletAddr = winner.users.wallet_address;
+    
+    if (!walletAddr) {
       console.log(`[Distribute] Skipping winner ${winner.id} - no wallet`);
       failedPayouts++;
       continue;
     }
     
+    console.log(`[Distribute] Processing winner ${winner.id.substring(0, 8)}... -> ${walletAddr.substring(0, 10)}...`);
+    
     try {
       const amount = ethers.parseUnits(payoutPerWinner.toFixed(6), 6);
+      console.log(`[Distribute] Amount: ${amount.toString()} (${payoutPerWinner.toFixed(6)} USDC)`);
       
-      // Use retry for blockchain transactions
+      // Send transaction with timeout (60 seconds per attempt)
       const tx = await withRetry(async () => {
-        const transaction = await usdc.transfer(winner.users.wallet_address, amount);
-        await transaction.wait();
+        console.log(`[Distribute] Sending transfer transaction...`);
+        
+        // Send with explicit gas limit to avoid estimation hanging
+        const transaction = await withTimeout(
+          usdc.transfer(walletAddr, amount, { gasLimit: 100000 }),
+          30000,
+          'transfer'
+        );
+        
+        console.log(`[Distribute] Transaction sent: ${transaction.hash}`);
+        console.log(`[Distribute] Waiting for confirmation...`);
+        
+        await withTimeout(
+          transaction.wait(1), // Wait for 1 confirmation
+          60000,
+          'confirmation'
+        );
+        
+        console.log(`[Distribute] Transaction confirmed!`);
         return transaction;
       });
       
@@ -267,33 +301,43 @@ async function distributePrizes(puzzleDate: string): Promise<DistributionResult>
       
       // Send notification
       await sendPrizeNotification(
-        winner.users.wallet_address,
+        walletAddr,
         winner.users.username || 'Player',
         payoutPerWinner
       );
       
       successfulPayouts++;
-      console.log(`[Distribute] Paid $${payoutPerWinner.toFixed(2)} to ${winner.users.wallet_address.substring(0, 10)}...`);
+      console.log(`[Distribute] ✅ Paid $${payoutPerWinner.toFixed(2)} to ${walletAddr.substring(0, 10)}...`);
     } catch (err) {
-      console.error(`[Distribute] Failed to pay ${winner.id} after retries:`, err);
+      const errorMsg = err instanceof Error ? err.message : String(err);
+      console.error(`[Distribute] ❌ Failed to pay ${winner.id}: ${errorMsg}`);
       failedPayouts++;
     }
   }
   
   // Pay insurance
   for (const loser of insuranceRecipients) {
-    if (!loser.users.wallet_address) {
+    const walletAddr = loser.users.wallet_address;
+    
+    if (!walletAddr) {
       failedPayouts++;
       continue;
     }
     
+    console.log(`[Distribute] Processing insurance for ${loser.id.substring(0, 8)}...`);
+    
     try {
       const amount = ethers.parseUnits(insurancePayout.toFixed(6), 6);
       
-      // Use retry for blockchain transactions
+      // Use retry for blockchain transactions with timeout
       const tx = await withRetry(async () => {
-        const transaction = await usdc.transfer(loser.users.wallet_address, amount);
-        await transaction.wait();
+        const transaction = await withTimeout(
+          usdc.transfer(walletAddr, amount, { gasLimit: 100000 }),
+          30000,
+          'insurance transfer'
+        );
+        console.log(`[Distribute] Insurance tx sent: ${transaction.hash}`);
+        await withTimeout(transaction.wait(1), 60000, 'insurance confirmation');
         return transaction;
       });
       
@@ -310,27 +354,37 @@ async function distributePrizes(puzzleDate: string): Promise<DistributionResult>
         .eq('id', loser.user_id);
       
       insurancePayouts++;
-      console.log(`[Distribute] Paid insurance $${insurancePayout.toFixed(2)} to ${loser.users.wallet_address.substring(0, 10)}...`);
+      console.log(`[Distribute] ✅ Paid insurance $${insurancePayout.toFixed(2)} to ${walletAddr.substring(0, 10)}...`);
     } catch (err) {
-      console.error(`[Distribute] Failed insurance for ${loser.id} after retries:`, err);
+      const errorMsg = err instanceof Error ? err.message : String(err);
+      console.error(`[Distribute] ❌ Failed insurance for ${loser.id}: ${errorMsg}`);
       failedPayouts++;
     }
   }
   
   // Sweep remaining to developer wallet
+  console.log(`[Distribute] Checking remaining balance for sweep...`);
   const remainingBalance = await withRetry(() => usdc.balanceOf(wallet.address));
   const remainingUSDC = Number(ethers.formatUnits(remainingBalance, 6));
+  console.log(`[Distribute] Remaining balance: $${remainingUSDC.toFixed(2)}`);
   
   if (remainingUSDC > 0.01) {
     try {
+      console.log(`[Distribute] Sweeping to developer wallet: ${DEVELOPER_WALLET?.substring(0, 10)}...`);
       await withRetry(async () => {
-        const tx = await usdc.transfer(DEVELOPER_WALLET, remainingBalance);
-        await tx.wait();
+        const tx = await withTimeout(
+          usdc.transfer(DEVELOPER_WALLET, remainingBalance, { gasLimit: 100000 }),
+          30000,
+          'sweep transfer'
+        );
+        console.log(`[Distribute] Sweep tx sent: ${tx.hash}`);
+        await withTimeout(tx.wait(1), 60000, 'sweep confirmation');
         return tx;
       });
-      console.log(`[Distribute] Swept $${remainingUSDC.toFixed(2)} to developer wallet`);
+      console.log(`[Distribute] ✅ Swept $${remainingUSDC.toFixed(2)} to developer wallet`);
     } catch (err) {
-      console.error('[Distribute] Failed to sweep after retries:', err);
+      const errorMsg = err instanceof Error ? err.message : String(err);
+      console.error(`[Distribute] ❌ Failed to sweep: ${errorMsg}`);
     }
   }
   
