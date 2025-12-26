@@ -227,7 +227,6 @@ async function distributePrizes() {
   
   // 3. Calculate pool and winners
   const totalPlayers = typedEntries.length;
-  const totalPool = totalPlayers * ENTRY_FEE;
   
   const winners = typedEntries.filter(e => e.status === 'won');
   const losers = typedEntries.filter(e => e.status === 'lost');
@@ -238,7 +237,14 @@ async function distributePrizes() {
   console.log(`   Winners: ${winnerCount} (${((winnerCount / totalPlayers) * 100).toFixed(1)}%)`);
   console.log(`   Losers: ${losers.length}`);
   
-  // 4. Calculate dynamic tax rate
+  // 4. Calculate streak insurance recipients (need count for budgeting)
+  const streakInsuranceRecipients = losers.filter(
+    e => e.users.has_streak_insurance === true
+  );
+  const insurancePerPerson = ENTRY_FEE * 0.50; // $0.50 refund
+  const totalInsuranceNeeded = streakInsuranceRecipients.length * insurancePerPerson;
+  
+  // 5. Calculate dynamic tax rate (based on winner ratio)
   const winnerRatio = winnerCount / totalPlayers;
   let platformFeePercent: number;
   let taxLabel: string;
@@ -254,29 +260,13 @@ async function distributePrizes() {
     taxLabel = '0% (waived)';
   }
   
-  const platformFee = totalPool * platformFeePercent;
-  const prizePool = totalPool - platformFee;
-  
-  // 5. Calculate per-winner payout
-  const payoutPerWinner = winnerCount > 0 ? prizePool / winnerCount : 0;
-  
-  console.log(`\n💰 Financials:`);
-  console.log(`   Total pool: $${totalPool.toFixed(2)}`);
-  console.log(`   Platform fee: $${platformFee.toFixed(2)} (${taxLabel})`);
-  console.log(`   Prize pool: $${prizePool.toFixed(2)}`);
-  console.log(`   Per winner: $${payoutPerWinner.toFixed(2)}`);
-  
-  // 6. Calculate streak insurance (50% refund - one-time use protection)
-  // Insurance is earned at 7-day streak and consumed on first loss
-  const streakInsuranceRecipients = losers.filter(
-    e => e.users.has_streak_insurance === true
-  );
-  const insurancePayout = ENTRY_FEE * 0.50; // $0.50 refund
+  // Note: Actual payout amounts will be calculated AFTER reading wallet balance
+  // to ensure we never exceed available funds
   
   if (streakInsuranceRecipients.length > 0) {
     console.log(`\n🛡️  Streak Insurance:`);
     console.log(`   Eligible losers (has insurance): ${streakInsuranceRecipients.length}`);
-    console.log(`   Refund per person: $${insurancePayout.toFixed(2)}`);
+    console.log(`   Target refund per person: $${insurancePerPerson.toFixed(2)}`);
   }
   
   // 6.5 Calculate referral commissions for entry fees
@@ -407,17 +397,20 @@ async function distributePrizes() {
     console.log(`   Referrers to pay: ${unpaidByReferrer.size}`);
   }
   
-  // 7. Connect to World Chain (skip in dry-run mode)
+  // 7. Connect to World Chain and read ACTUAL balance (skip connection in dry-run mode)
   let provider: ethers.JsonRpcProvider | null = null;
   let wallet: ethers.Wallet | null = null;
   let usdc: ethers.Contract | null = null;
   let balanceUSDC = 0;
   
-  const totalNeeded = (winnerCount * payoutPerWinner) + (streakInsuranceRecipients.length * insurancePayout) + totalUnpaidReferrals;
+  // Calculate expected total for dry-run estimation
+  const expectedTotal = totalPlayers * ENTRY_FEE;
   
   if (DRY_RUN) {
     console.log('\n🔗 World Chain connection (SKIPPED - dry run)');
-    console.log(`   Would need: $${totalNeeded.toFixed(2)} USDC`);
+    // Use expected pool for dry-run calculations
+    balanceUSDC = expectedTotal;
+    console.log(`   Estimated balance: $${balanceUSDC.toFixed(2)} USDC (based on entries)`);
   } else {
     console.log('\n🔗 Connecting to World Chain...');
     provider = new ethers.JsonRpcProvider(process.env.WORLD_CHAIN_RPC_URL);
@@ -429,13 +422,52 @@ async function distributePrizes() {
     balanceUSDC = Number(ethers.formatUnits(balance, 6));
     console.log(`   Payout wallet: ${wallet.address}`);
     console.log(`   USDC balance: $${balanceUSDC.toFixed(2)}`);
-    
-    if (balanceUSDC < totalNeeded) {
-      throw new Error(`Insufficient balance! Need $${totalNeeded.toFixed(2)}, have $${balanceUSDC.toFixed(2)}`);
-    }
   }
   
-  // 8. Send payouts to winners
+  // 8. Calculate ACTUAL payouts based on wallet balance
+  // Budget: Insurance first, then referrals, then winners get the rest
+  console.log(`\n💰 Calculating payouts from actual balance...`);
+  
+  // Reserve insurance from balance first
+  let actualInsurancePayout = insurancePerPerson;
+  let insuranceReserve = totalInsuranceNeeded;
+  
+  if (balanceUSDC < totalInsuranceNeeded) {
+    // Not enough for full insurance - pay what we can proportionally
+    insuranceReserve = balanceUSDC;
+    actualInsurancePayout = streakInsuranceRecipients.length > 0 
+      ? balanceUSDC / streakInsuranceRecipients.length 
+      : 0;
+    console.log(`   ⚠️ Insufficient balance for full insurance. Reduced to $${actualInsurancePayout.toFixed(2)} per person`);
+  }
+  
+  // Reserve referrals from remaining balance
+  const afterInsurance = Math.max(0, balanceUSDC - insuranceReserve);
+  let actualReferralReserve = totalUnpaidReferrals;
+  
+  if (afterInsurance < totalUnpaidReferrals) {
+    // Not enough for full referrals - pay what we can
+    actualReferralReserve = afterInsurance;
+    console.log(`   ⚠️ Reduced referral payouts to $${actualReferralReserve.toFixed(2)}`);
+  }
+  
+  // Available for winners after insurance and referrals
+  const availableForWinners = Math.max(0, afterInsurance - actualReferralReserve);
+  
+  // Apply platform fee to winner pool
+  const platformFee = availableForWinners * platformFeePercent;
+  const prizePool = availableForWinners - platformFee;
+  const payoutPerWinner = winnerCount > 0 ? prizePool / winnerCount : 0;
+  
+  console.log(`   Balance: $${balanceUSDC.toFixed(2)}`);
+  console.log(`   Insurance reserve: $${insuranceReserve.toFixed(2)} (${streakInsuranceRecipients.length} recipients × $${actualInsurancePayout.toFixed(2)})`);
+  console.log(`   Referral reserve: $${actualReferralReserve.toFixed(2)}`);
+  console.log(`   Available for winners: $${availableForWinners.toFixed(2)}`);
+  console.log(`   Platform fee: $${platformFee.toFixed(2)} (${taxLabel})`);
+  console.log(`   Prize pool: $${prizePool.toFixed(2)}`);
+  console.log(`   Per winner: $${payoutPerWinner.toFixed(2)}`)
+  
+  // 9. Send payouts to winners
   console.log('\n🏆 Sending winner payouts...');
   let successCount = 0;
   let failCount = 0;
@@ -487,8 +519,8 @@ async function distributePrizes() {
     }
   }
   
-  // 9. Send streak insurance refunds (one-time use - consume after applying)
-  if (streakInsuranceRecipients.length > 0) {
+  // 10. Send streak insurance refunds (one-time use - consume after applying)
+  if (streakInsuranceRecipients.length > 0 && actualInsurancePayout > 0) {
     console.log('\n🛡️  Sending streak insurance refunds...');
     
     for (const loser of streakInsuranceRecipients) {
@@ -498,16 +530,16 @@ async function distributePrizes() {
       }
       
       if (DRY_RUN) {
-        console.log(`   🧪 Would send $${insurancePayout.toFixed(2)} insurance to ${loser.users.wallet_address}`);
+        console.log(`   🧪 Would send $${actualInsurancePayout.toFixed(2)} insurance to ${loser.users.wallet_address}`);
         successCount++;
         continue;
       }
       
-      const amount = ethers.parseUnits(insurancePayout.toFixed(6), 6);
+      const amount = ethers.parseUnits(actualInsurancePayout.toFixed(6), 6);
       
       try {
         const tx = await usdc!.transfer(loser.users.wallet_address, amount);
-        console.log(`   ⏳ Sending $${insurancePayout.toFixed(2)} insurance to ${loser.users.wallet_address}...`);
+        console.log(`   ⏳ Sending $${actualInsurancePayout.toFixed(2)} insurance to ${loser.users.wallet_address}...`);
         await tx.wait();
         
         // Record insurance payout on the game entry
@@ -515,7 +547,7 @@ async function distributePrizes() {
           .from('game_entries')
           .update({ 
             streak_insurance_applied: true,
-            refund_amount: insurancePayout,
+            refund_amount: actualInsurancePayout,
             prize_transaction_hash: tx.hash 
           })
           .eq('id', loser.id);
@@ -535,7 +567,7 @@ async function distributePrizes() {
         const notifSent = await sendPrizeNotification(
           loser.users.wallet_address,
           loser.users.username || 'Player',
-          insurancePayout
+          actualInsurancePayout
         );
         if (notifSent) {
           console.log(`   📱 Notification sent!`);
@@ -549,7 +581,7 @@ async function distributePrizes() {
     }
   }
   
-  // 10. Send referral commission payouts
+  // 11. Send referral commission payouts
   if (unpaidByReferrer.size > 0) {
     console.log('\n🎁 Sending referral commission payouts...');
     
@@ -607,7 +639,7 @@ async function distributePrizes() {
     }
   }
   
-  // 11. Sweep remaining balance to Developer Wallet
+  // 12. Sweep remaining balance to Developer Wallet
   // The platform fee (minus referral commissions) stays in the payout wallet
   // We sweep it to the developer wallet so the platform wallet is empty
   console.log('\n💼 Sweeping platform revenue to Developer Wallet...');
@@ -615,8 +647,8 @@ async function distributePrizes() {
   let remainingUSDC = 0;
   
   if (DRY_RUN) {
-    // In dry-run, estimate remaining balance
-    remainingUSDC = platformFee - totalUnpaidReferrals;
+    // In dry-run, estimate remaining balance (platform fee portion)
+    remainingUSDC = platformFee;
     if (remainingUSDC > 0) {
       console.log(`   🧪 Would sweep ~$${remainingUSDC.toFixed(2)} to developer wallet`);
     } else {
@@ -646,7 +678,11 @@ async function distributePrizes() {
     }
   }
   
-  // 12. Summary
+  // 13. Summary
+  const totalDistributed = (successCount > 0 ? successCount * payoutPerWinner : 0) + 
+                          (streakInsuranceRecipients.length * actualInsurancePayout) + 
+                          actualReferralReserve;
+  
   console.log('\n' + '='.repeat(50));
   if (DRY_RUN) {
     console.log(`🧪 DRY RUN SUMMARY (no transactions sent)`);
@@ -659,7 +695,7 @@ async function distributePrizes() {
   console.log(`   Insurance payouts: ${streakInsuranceRecipients.filter(l => l.users.wallet_address).length}`);
   console.log(`   Referral payouts: ${Array.from(unpaidByReferrer.values()).filter(r => r.walletAddress).length}`);
   console.log(`   Platform revenue: $${remainingUSDC.toFixed(2)}`);
-  console.log(`   Total distributed: $${totalNeeded.toFixed(2)}`);
+  console.log(`   Total distributed: $${totalDistributed.toFixed(2)}`);
   console.log('='.repeat(50) + '\n');
 }
 

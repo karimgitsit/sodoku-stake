@@ -217,6 +217,28 @@ async function distributePrizes(puzzleDate: string): Promise<DistributionResult>
   const nonWinners = typedEntries.filter(e => e.status !== 'won');
   const winnerCount = winners.length;
   
+  // Streak insurance - calculate obligation first (reserved from balance)
+  const insuranceRecipients = nonWinners.filter(e => e.users.has_streak_insurance === true);
+  const insurancePerPerson = ENTRY_FEE * 0.50;
+  const totalInsuranceNeeded = insuranceRecipients.length * insurancePerPerson;
+  
+  // Reserve insurance from balance first, then calculate prizes from remainder
+  // If balance can't cover full insurance, reduce proportionally
+  let actualInsurancePayout = insurancePerPerson;
+  let insuranceReserve = totalInsuranceNeeded;
+  
+  if (balanceUSDC < totalInsuranceNeeded) {
+    // Not enough for full insurance - pay what we can proportionally
+    insuranceReserve = balanceUSDC;
+    actualInsurancePayout = insuranceRecipients.length > 0 
+      ? balanceUSDC / insuranceRecipients.length 
+      : 0;
+    console.log(`[Distribute] ⚠️ Insufficient balance for full insurance. Reduced to $${actualInsurancePayout.toFixed(2)} per person`);
+  }
+  
+  // Available balance for winners after insurance is reserved
+  const availableForWinners = Math.max(0, balanceUSDC - insuranceReserve);
+  
   // Calculate dynamic platform fee based on winner ratio
   const winnerRatio = totalPlayers > 0 ? winnerCount / totalPlayers : 0;
   let platformFeePercent: number;
@@ -229,24 +251,14 @@ async function distributePrizes(puzzleDate: string): Promise<DistributionResult>
     platformFeePercent = 0;
   }
   
-  // Calculate prize distribution from ACTUAL balance
-  const platformFee = balanceUSDC * platformFeePercent;
-  const prizePool = balanceUSDC - platformFee;
+  // Calculate prize distribution from available balance (after insurance)
+  const platformFee = availableForWinners * platformFeePercent;
+  const prizePool = availableForWinners - platformFee;
   const payoutPerWinner = winnerCount > 0 ? prizePool / winnerCount : 0;
   
-  // Streak insurance - check non-winners (not just 'lost' status)
-  const insuranceRecipients = nonWinners.filter(e => e.users.has_streak_insurance === true);
-  const insurancePayout = ENTRY_FEE * 0.50;
-  
   console.log(`[Distribute] Players: ${totalPlayers}, Winners: ${winnerCount}, Tax: ${platformFeePercent * 100}%`);
-  console.log(`[Distribute] Prize per winner: $${payoutPerWinner.toFixed(2)}, Insurance recipients: ${insuranceRecipients.length}`);
-  
-  // Validate we have enough for payouts
-  const totalNeeded = (winnerCount * payoutPerWinner) + (insuranceRecipients.length * insurancePayout);
-  
-  if (balanceUSDC < totalNeeded) {
-    throw new Error(`Insufficient balance! Need $${totalNeeded.toFixed(2)}, have $${balanceUSDC.toFixed(2)}`);
-  }
+  console.log(`[Distribute] Balance: $${balanceUSDC.toFixed(2)}, Insurance reserve: $${insuranceReserve.toFixed(2)}, Available for winners: $${availableForWinners.toFixed(2)}`);
+  console.log(`[Distribute] Prize per winner: $${payoutPerWinner.toFixed(2)}, Insurance per person: $${actualInsurancePayout.toFixed(2)}`)
   
   // Distribute prizes
   let successfulPayouts = 0;
@@ -327,7 +339,7 @@ async function distributePrizes(puzzleDate: string): Promise<DistributionResult>
     console.log(`[Distribute] Processing insurance for ${loser.id.substring(0, 8)}...`);
     
     try {
-      const amount = ethers.parseUnits(insurancePayout.toFixed(6), 6);
+      const amount = ethers.parseUnits(actualInsurancePayout.toFixed(6), 6);
       
       // Use retry for blockchain transactions with timeout
       const tx = await withRetry(async () => {
@@ -344,7 +356,7 @@ async function distributePrizes(puzzleDate: string): Promise<DistributionResult>
       // Update database
       await supabase
         .from('game_entries')
-        .update({ streak_insurance_applied: true, refund_amount: insurancePayout, prize_transaction_hash: tx.hash })
+        .update({ streak_insurance_applied: true, refund_amount: actualInsurancePayout, prize_transaction_hash: tx.hash })
         .eq('id', loser.id);
       
       // Consume insurance
@@ -354,7 +366,7 @@ async function distributePrizes(puzzleDate: string): Promise<DistributionResult>
         .eq('id', loser.user_id);
       
       insurancePayouts++;
-      console.log(`[Distribute] ✅ Paid insurance $${insurancePayout.toFixed(2)} to ${walletAddr.substring(0, 10)}...`);
+      console.log(`[Distribute] ✅ Paid insurance $${actualInsurancePayout.toFixed(2)} to ${walletAddr.substring(0, 10)}...`);
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : String(err);
       console.error(`[Distribute] ❌ Failed insurance for ${loser.id}: ${errorMsg}`);
@@ -388,7 +400,7 @@ async function distributePrizes(puzzleDate: string): Promise<DistributionResult>
     }
   }
   
-  const totalDistributed = (successfulPayouts * payoutPerWinner) + (insurancePayouts * insurancePayout);
+  const totalDistributed = (successfulPayouts * payoutPerWinner) + (insurancePayouts * actualInsurancePayout);
   
   return {
     success: true,
