@@ -81,6 +81,7 @@ export function ProfileScreen() {
     totalWins: 0,
     winRate: 0,
     totalEarnings: 0,
+    currentStreak: 0,
     longestStreak: 0,
     rank: 0,
   };
@@ -170,6 +171,7 @@ export function ProfileScreen() {
               totalWins: data.stats.totalWins,
               winRate: data.stats.winRate,
               totalEarnings: data.stats.totalEarnings,
+              currentStreak: data.stats.currentStreak,
               longestStreak: data.stats.longestStreak,
               rank: data.stats.rank,
             });
