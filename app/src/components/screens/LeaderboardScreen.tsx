@@ -31,7 +31,7 @@ export function LeaderboardScreen() {
     setError(null);
     
     try {
-      const response = await fetch(`/api/leaderboard?type=${type}&limit=20`);
+      const response = await fetch(`/api/leaderboard?type=${type}&limit=50`);
       const data = await response.json();
       
       if (!response.ok) {
@@ -192,7 +192,13 @@ export function LeaderboardScreen() {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm text-muted">Showing</p>
-                <p className="text-lg font-bold">{leaderboardData.data.length} players</p>
+                <p className="text-lg font-bold">
+                  {leaderboardData.data.length}
+                  {leaderboardData.totalCount && leaderboardData.totalCount > leaderboardData.data.length 
+                    ? ` of ${leaderboardData.totalCount}` 
+                    : ''
+                  } players
+                </p>
               </div>
               <div className="text-right">
                 <p className="text-sm text-muted">Updated</p>

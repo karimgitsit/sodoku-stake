@@ -353,11 +353,13 @@ export function HomeScreen() {
         <div className="grid grid-cols-3 gap-4 mb-4">
           <div className="text-center">
             <p className="text-2xl font-bold">{todayPlayers > 0 ? todayPlayers : '0'}</p>
-            <p className="text-xs text-muted">Players</p>
+            <p className="text-xs text-muted">Players Today</p>
           </div>
           <div className="text-center">
-            <p className="text-2xl font-bold">{todayPlayers > 0 ? `${todaySuccessRate}%` : '0%'}</p>
-            <p className="text-xs text-muted">Failed</p>
+            <p className="text-2xl font-bold">
+              {yesterdayStats ? `${yesterdayStats.failureRate}%` : '--'}
+            </p>
+            <p className="text-xs text-muted">Failed Yesterday</p>
           </div>
           <div className="text-center">
             <p className="text-2xl font-bold text-success">${prizePool > 0 ? prizePool.toFixed(2) : '10.00'}</p>

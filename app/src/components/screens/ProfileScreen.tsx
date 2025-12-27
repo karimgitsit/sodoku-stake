@@ -32,6 +32,16 @@ interface NotificationPreferences {
   notify_results: boolean;
 }
 
+interface UserStats {
+  totalGames: number;
+  totalWins: number;
+  winRate: number;
+  totalEarnings: number;
+  currentStreak: number;
+  longestStreak: number;
+  rank: number;
+}
+
 export function ProfileScreen() {
   const { 
     currentStreak,
@@ -62,15 +72,17 @@ export function ProfileScreen() {
     notify_results: true,
   });
   const [savingPrefs, setSavingPrefs] = useState(false);
+  const [userStats, setUserStats] = useState<UserStats | null>(null);
+  const [statsLoading, setStatsLoading] = useState(false);
 
-  // Mock stats (will be replaced with real data)
-  const stats = {
-    totalGames: 23,
-    totalWins: 14,
-    winRate: 61,
-    totalEarnings: 12.47,
-    longestStreak: 12,
-    rank: 847,
+  // Use real stats from API, fallback to zeros if not loaded
+  const stats = userStats || {
+    totalGames: 0,
+    totalWins: 0,
+    winRate: 0,
+    totalEarnings: 0,
+    longestStreak: 0,
+    rank: 0,
   };
 
   // Use store values or API values
@@ -142,6 +154,37 @@ export function ProfileScreen() {
     }
   };
 
+  // Fetch user stats on load
+  useEffect(() => {
+    const fetchUserStats = async () => {
+      if (!puzzleUserId) return;
+      
+      setStatsLoading(true);
+      try {
+        const response = await fetch(`/api/user/stats?userId=${puzzleUserId}`);
+        if (response.ok) {
+          const data = await response.json();
+          if (data.success && data.stats) {
+            setUserStats({
+              totalGames: data.stats.totalGames,
+              totalWins: data.stats.totalWins,
+              winRate: data.stats.winRate,
+              totalEarnings: data.stats.totalEarnings,
+              longestStreak: data.stats.longestStreak,
+              rank: data.stats.rank,
+            });
+          }
+        }
+      } catch (error) {
+        console.error('[Profile] Failed to fetch user stats:', error);
+      } finally {
+        setStatsLoading(false);
+      }
+    };
+
+    fetchUserStats();
+  }, [puzzleUserId]);
+
   // Fetch notification preferences on load
   useEffect(() => {
     const fetchNotificationPrefs = async () => {
@@ -206,36 +249,36 @@ export function ProfileScreen() {
   // Fetch referral stats from API
   useEffect(() => {
     const fetchReferralStats = async () => {
-      // For now, use mock data in development
-      // In production, this would call the API
+      if (!puzzleUserId) {
+        // No user ID yet - show loading state
+        return;
+      }
+      
       setIsLoading(true);
       try {
-        // TODO: Replace with actual API call when userId is available
-        // const response = await fetch(`/api/referral/stats?userId=${userId}`);
-        // const data = await response.json();
-        // setReferralStats(data);
+        const response = await fetch(`/api/referral/stats?userId=${puzzleUserId}`);
         
-        // Mock data for now
-        setReferralStats({
-          referralCode: storeReferralCode || 'STAKE' + Math.random().toString(36).substring(2, 6).toUpperCase(),
-          totalReferrals: 3,
-          totalEarnings: 1.20,
-          unpaidEarnings: 0.30,
-          recentEarnings: [
-            { id: '1', sourceType: 'entry', amount: 0.10, commissionRate: 0.10, date: '2025-12-03', paidOut: true },
-            { id: '2', sourceType: 'entry', amount: 0.10, commissionRate: 0.10, date: '2025-12-03', paidOut: true },
-            { id: '3', sourceType: 'reveal', amount: 0.02, commissionRate: 0.10, date: '2025-12-02', paidOut: false },
-          ],
-        });
+        if (response.ok) {
+          const data = await response.json();
+          setReferralStats({
+            referralCode: data.referralCode || storeReferralCode || 'LOADING',
+            totalReferrals: data.totalReferrals || 0,
+            totalEarnings: data.totalEarnings || 0,
+            unpaidEarnings: data.unpaidEarnings || 0,
+            recentEarnings: data.recentEarnings || [],
+          });
+        } else {
+          console.error('[Profile] Failed to fetch referral stats:', response.status);
+        }
       } catch (error) {
-        console.error('Failed to fetch referral stats:', error);
+        console.error('[Profile] Failed to fetch referral stats:', error);
       } finally {
         setIsLoading(false);
       }
     };
 
     fetchReferralStats();
-  }, [storeReferralCode]);
+  }, [puzzleUserId, storeReferralCode]);
 
   return (
     <div className="flex flex-col min-h-full p-4 pb-24">
@@ -257,7 +300,7 @@ export function ProfileScreen() {
           </div>
           <div className="text-right">
             <p className="text-sm text-muted">Best Streak</p>
-            <p className="text-2xl font-bold">{stats.longestStreak}</p>
+            <p className="text-2xl font-bold">{statsLoading ? '...' : stats.longestStreak}</p>
           </div>
         </div>
         
@@ -277,19 +320,19 @@ export function ProfileScreen() {
       {/* Stats Grid */}
       <div className="grid grid-cols-2 gap-3 mb-4">
         <div className="bg-card border border-border rounded-xl p-4">
-          <p className="text-2xl font-bold">{stats.totalGames}</p>
+          <p className="text-2xl font-bold">{statsLoading ? '...' : stats.totalGames}</p>
           <p className="text-xs text-muted">Games Played</p>
         </div>
         <div className="bg-card border border-border rounded-xl p-4">
-          <p className="text-2xl font-bold text-success">{stats.totalWins}</p>
+          <p className="text-2xl font-bold text-success">{statsLoading ? '...' : stats.totalWins}</p>
           <p className="text-xs text-muted">Wins</p>
         </div>
         <div className="bg-card border border-border rounded-xl p-4">
-          <p className="text-2xl font-bold">{stats.winRate}%</p>
+          <p className="text-2xl font-bold">{statsLoading ? '...' : `${stats.winRate}%`}</p>
           <p className="text-xs text-muted">Win Rate</p>
         </div>
         <div className="bg-card border border-border rounded-xl p-4">
-          <p className="text-2xl font-bold text-primary">${stats.totalEarnings.toFixed(2)}</p>
+          <p className="text-2xl font-bold text-primary">{statsLoading ? '...' : `$${stats.totalEarnings.toFixed(2)}`}</p>
           <p className="text-xs text-muted">Total Earnings</p>
         </div>
       </div>
@@ -299,7 +342,9 @@ export function ProfileScreen() {
         <div className="flex items-center justify-between">
           <div>
             <p className="text-sm text-muted">Global Rank</p>
-            <p className="text-2xl font-bold">#{stats.rank}</p>
+            <p className="text-2xl font-bold">
+              {statsLoading ? '...' : stats.rank > 0 ? `#${stats.rank}` : 'Unranked'}
+            </p>
           </div>
           <div className="text-4xl">🏆</div>
         </div>

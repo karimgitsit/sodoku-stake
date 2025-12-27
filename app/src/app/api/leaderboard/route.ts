@@ -4,7 +4,8 @@ import {
   getFastestSolvers, 
   getStreakLeaderboard,
   getWeeklyEarningsLeaderboard,
-  getReferralLeaderboard 
+  getReferralLeaderboard,
+  getTotalPlayersCount 
 } from '@/lib/db';
 import { getTodayDate } from '@/lib/supabase';
 
@@ -32,7 +33,7 @@ export async function GET(request: NextRequest) {
     const { searchParams } = new URL(request.url);
     const type = searchParams.get('type') || 'fastest';
     const limitParam = searchParams.get('limit');
-    const limit = limitParam ? parseInt(limitParam, 10) : 10;
+    const limit = limitParam ? parseInt(limitParam, 10) : 50; // Increased default from 10 to 50
 
     switch (type) {
       case 'fastest': {
@@ -72,12 +73,14 @@ export async function GET(request: NextRequest) {
 
       case 'alltime': {
         const allTimeLeaders = await getLeaderboard(limit);
+        const totalPlayers = await getTotalPlayersCount();
         
         return NextResponse.json({
           success: true,
           type: 'alltime',
           title: 'Highest Earners (All Time)',
           metric: 'Total Earnings',
+          totalCount: totalPlayers,
           data: allTimeLeaders.map((user, index) => ({
             rank: index + 1,
             username: user.username || 'Anonymous',
