@@ -552,11 +552,12 @@ async function distributePrizes() {
           })
           .eq('id', loser.id);
         
-        // Consume the insurance (one-time use)
+        // Consume the insurance (one-time use) and reset insurance_streak counter
         await supabase
           .from('users')
           .update({ 
             has_streak_insurance: false,
+            insurance_streak: 0,
             updated_at: new Date().toISOString()
           })
           .eq('id', loser.user_id);

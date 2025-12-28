@@ -359,10 +359,10 @@ async function distributePrizes(puzzleDate: string): Promise<DistributionResult>
         .update({ streak_insurance_applied: true, refund_amount: actualInsurancePayout, prize_transaction_hash: tx.hash })
         .eq('id', loser.id);
       
-      // Consume insurance
+      // Consume insurance and reset insurance_streak counter
       await supabase
         .from('users')
-        .update({ has_streak_insurance: false })
+        .update({ has_streak_insurance: false, insurance_streak: 0 })
         .eq('id', loser.user_id);
       
       insurancePayouts++;

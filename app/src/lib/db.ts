@@ -82,6 +82,7 @@ export async function getOrCreateUser(
         current_streak: 0,
         longest_streak: 0,
         has_streak_insurance: false,
+        insurance_streak: 0,
         last_played_date: null,
         referral_earnings: 0,
         total_referrals: 0,

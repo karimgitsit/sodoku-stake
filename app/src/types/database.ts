@@ -30,6 +30,7 @@ export interface Database {
           current_streak: number;
           longest_streak: number;
           has_streak_insurance: boolean;
+          insurance_streak: number;
           last_played_date: string | null;
           referral_earnings: number;
           total_referrals: number;
@@ -49,6 +50,7 @@ export interface Database {
           current_streak?: number;
           longest_streak?: number;
           has_streak_insurance?: boolean;
+          insurance_streak?: number;
           last_played_date?: string | null;
           referral_earnings?: number;
           total_referrals?: number;
@@ -68,6 +70,7 @@ export interface Database {
           current_streak?: number;
           longest_streak?: number;
           has_streak_insurance?: boolean;
+          insurance_streak?: number;
           last_played_date?: string | null;
           referral_earnings?: number;
           total_referrals?: number;
