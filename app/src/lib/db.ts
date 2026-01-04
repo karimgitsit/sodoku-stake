@@ -179,8 +179,16 @@ export async function getUserById(userId: string): Promise<User | null> {
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const db = supabase as any;
-  const { data } = await db.from('users').select('*').eq('id', userId).single();
-  return data as User | null;
+  
+  // First try to find by id (UUID)
+  const { data: byId } = await db.from('users').select('*').eq('id', userId).single();
+  if (byId) {
+    return byId as User;
+  }
+  
+  // If not found, try by world_id_hash (for when nullifier hash is passed)
+  const { data: byHash } = await db.from('users').select('*').eq('world_id_hash', userId).single();
+  return byHash as User | null;
 }
 
 export async function updateUser(userId: string, updates: UserUpdate): Promise<User | null> {
@@ -194,18 +202,32 @@ export async function updateUser(userId: string, updates: UserUpdate): Promise<U
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const db = supabase as any;
-  const { data, error } = await db
+  
+  // First try to update by id (UUID)
+  const { data: byId, error: errorById } = await db
     .from('users')
     .update({ ...updates, updated_at: new Date().toISOString() })
     .eq('id', userId)
     .select()
     .single();
   
-  if (error) {
-    console.error('[DB] Error updating user:', error);
+  if (byId) {
+    return byId as User;
+  }
+  
+  // If not found by id, try by world_id_hash (for when nullifier hash is passed)
+  const { data: byHash, error: errorByHash } = await db
+    .from('users')
+    .update({ ...updates, updated_at: new Date().toISOString() })
+    .eq('world_id_hash', userId)
+    .select()
+    .single();
+  
+  if (errorById && errorByHash) {
+    console.error('[DB] Error updating user:', errorById || errorByHash);
     return null;
   }
-  return data as User;
+  return byHash as User | null;
 }
 
 // =============================================================================
