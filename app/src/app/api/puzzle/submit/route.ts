@@ -94,9 +94,25 @@ export async function POST(request: NextRequest) {
       const taxBreakdown = calculateTaxBreakdown(stats.players, estimatedWinners);
       
       // ===========================================================================
-      // ACHIEVEMENT NOTIFICATIONS
+      // UPDATE USER STATS (synchronous - must complete before response)
       // ===========================================================================
-      // Run notifications in the background (don't block response)
+      // Increment total_wins immediately to ensure it's tracked
+      // NOTE: current_streak, longest_streak, last_played_date, and has_streak_insurance
+      // are handled by the database trigger on game entry creation
+      const newTotalWins = (user.total_wins || 0) + 1;
+      try {
+        await updateUser(user.id, {
+          total_wins: newTotalWins,
+        });
+        console.log(`[Submit] Updated total_wins for user ${user.id.substring(0, 8)}... to ${newTotalWins}`);
+      } catch (error) {
+        console.error(`[Submit] Failed to update total_wins for user ${user.id.substring(0, 8)}...:`, error);
+        // Don't fail the response - the win is still recorded in game_entries
+      }
+      
+      // ===========================================================================
+      // ACHIEVEMENT NOTIFICATIONS (async - don't block response)
+      // ===========================================================================
       (async () => {
         try {
           // Refresh user to get updated stats
@@ -105,16 +121,9 @@ export async function POST(request: NextRequest) {
           
           const username = updatedUser.username || 'Player';
           const walletAddress = updatedUser.wallet_address;
-          const totalWins = updatedUser.total_wins + 1; // +1 for this win
-          const currentStreak = updatedUser.current_streak + 1; // +1 for this win
+          const totalWins = updatedUser.total_wins; // Already updated above
+          const currentStreak = updatedUser.current_streak;
           const estimatedNewEarnings = updatedUser.total_earnings + taxBreakdown.prizePerWinner;
-          
-          // Update user stats (increment wins)
-          // NOTE: current_streak, longest_streak, last_played_date, and has_streak_insurance
-          // are handled by the database trigger on game entry creation - don't override here
-          await updateUser(user.id, {
-            total_wins: totalWins,
-          });
           
           // 1. First win notification
           if (totalWins === 1) {
