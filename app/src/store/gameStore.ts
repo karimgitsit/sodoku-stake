@@ -6,6 +6,27 @@ import { Cell, SudokuGrid, GameStatus, AppScreen, CellValue } from '@/types';
 // =============================================================================
 
 const STORAGE_KEY = 'sodoku_stake_game_state';
+const USER_ID_KEY = 'sodoku_stake_user_id';
+
+// Persist user ID separately so it survives game resets
+function saveUserId(userId: string): void {
+  if (typeof window === 'undefined') return;
+  try {
+    localStorage.setItem(USER_ID_KEY, userId);
+  } catch (error) {
+    console.error('[GameStore] Failed to save user ID:', error);
+  }
+}
+
+export function getPersistedUserId(): string | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    return localStorage.getItem(USER_ID_KEY);
+  } catch (error) {
+    console.error('[GameStore] Failed to get user ID:', error);
+    return null;
+  }
+}
 
 interface PersistedGameState {
   puzzleDate: string;
@@ -243,6 +264,9 @@ export const useGameStore = create<GameState>((set, get) => ({
 
   // Set puzzle from server (no solution - validation is server-side)
   setPuzzleFromServer: (puzzle, date, userId, entryId) => {
+    // Persist the userId separately so it survives game resets
+    saveUserId(userId);
+    
     const startTime = Date.now();
     set({
       puzzle: numberGridToCellGrid(puzzle),
@@ -279,6 +303,9 @@ export const useGameStore = create<GameState>((set, get) => ({
   // Restore a game session (e.g., when user comes back after quitting)
   restoreGameSession: (params) => {
     const { puzzle, date, userId, entryId, status, mistakesCount, maxMistakes, gameLocked } = params;
+    
+    // Persist the userId separately so it survives game resets
+    saveUserId(userId);
     
     // Try to load saved progress from localStorage
     const savedState = loadGameFromStorage();

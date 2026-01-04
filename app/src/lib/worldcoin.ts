@@ -160,11 +160,13 @@ export async function verifyWorldId(
     // Check if MiniKit is available
     if (!MiniKit.isInstalled()) {
       console.warn('[WorldID] MiniKit not installed - running outside World App');
-      // In development, return a mock success
+      // In development, return a mock success with a consistent ID for testing
       if (process.env.NODE_ENV === 'development') {
+        // Use a consistent dev ID so stats persist across sessions
+        const DEV_USER_ID = 'dev_mock_nullifier_test_user';
         return {
           success: true,
-          nullifierHash: 'dev_mock_nullifier_' + Date.now(),
+          nullifierHash: DEV_USER_ID,
         };
       }
       return {

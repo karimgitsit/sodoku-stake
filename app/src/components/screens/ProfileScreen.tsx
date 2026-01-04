@@ -1,9 +1,10 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
-import { useGameStore } from '@/store/gameStore';
+import { useState, useEffect, useCallback, useRef } from 'react';
+import { useGameStore, getPersistedUserId } from '@/store/gameStore';
 import { useWallet } from '@/components/MiniKitProvider';
 import { MiniKit } from '@worldcoin/minikit-js';
+import { verifyWorldId, ACTIONS } from '@/lib/worldcoin';
 
 // App configuration
 const APP_ID = process.env.NEXT_PUBLIC_APP_ID || 'app_sodoku_stake';
@@ -63,6 +64,8 @@ export function ProfileScreen() {
   const [userStats, setUserStats] = useState<UserStats | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [isLoadingStats, setIsLoadingStats] = useState(true);
+  const [resolvedUserId, setResolvedUserId] = useState<string | null>(null);
+  const userIdResolved = useRef(false);
   const [copySuccess, setCopySuccess] = useState(false);
   const [shareSuccess, setShareSuccess] = useState(false);
   const [showNotificationSettings, setShowNotificationSettings] = useState(false);
@@ -157,17 +160,61 @@ export function ProfileScreen() {
     }
   };
 
+  // Resolve user ID: from store, localStorage, or World ID verification
+  useEffect(() => {
+    const resolveUserId = async () => {
+      // Only resolve once
+      if (userIdResolved.current) return;
+      
+      // Priority 1: Use store's puzzleUserId if available
+      if (puzzleUserId) {
+        console.log('[Profile] Using userId from store');
+        setResolvedUserId(puzzleUserId);
+        userIdResolved.current = true;
+        return;
+      }
+      
+      // Priority 2: Try to get from persisted storage (survives game resets)
+      const persistedUserId = getPersistedUserId();
+      if (persistedUserId) {
+        console.log('[Profile] Using userId from persisted storage');
+        setResolvedUserId(persistedUserId);
+        userIdResolved.current = true;
+        return;
+      }
+      
+      // Priority 3: Verify World ID to get userId
+      console.log('[Profile] Verifying World ID to get userId...');
+      try {
+        const today = new Date().toISOString().split('T')[0];
+        const result = await verifyWorldId(ACTIONS.DAILY_ENTRY, today);
+        if (result.success && result.nullifierHash) {
+          console.log('[Profile] Got userId from World ID verification');
+          setResolvedUserId(result.nullifierHash);
+          userIdResolved.current = true;
+        } else {
+          console.log('[Profile] World ID verification failed or cancelled');
+          setIsLoadingStats(false);
+        }
+      } catch (error) {
+        console.error('[Profile] World ID verification error:', error);
+        setIsLoadingStats(false);
+      }
+    };
+
+    resolveUserId();
+  }, [puzzleUserId]);
+
   // Fetch user stats from API
   useEffect(() => {
     const fetchUserStats = async () => {
-      if (!puzzleUserId) {
-        setIsLoadingStats(false);
+      if (!resolvedUserId) {
         return;
       }
       
       setIsLoadingStats(true);
       try {
-        const response = await fetch(`/api/user/stats?userId=${puzzleUserId}`);
+        const response = await fetch(`/api/user/stats?userId=${resolvedUserId}`);
         if (response.ok) {
           const data = await response.json();
           if (data.success && data.stats) {
@@ -182,6 +229,19 @@ export function ProfileScreen() {
               rank: data.stats.rank,
             });
           }
+        } else if (response.status === 404) {
+          // User not found in DB - they haven't played yet, show zeros
+          console.log('[Profile] User not found in database - showing default stats');
+          setUserStats({
+            totalGames: 0,
+            totalWins: 0,
+            winRate: 0,
+            totalEarnings: 0,
+            currentStreak: 0,
+            longestStreak: 0,
+            hasStreakInsurance: false,
+            rank: null,
+          });
         }
       } catch (error) {
         console.error('[Profile] Failed to fetch user stats:', error);
@@ -191,15 +251,15 @@ export function ProfileScreen() {
     };
 
     fetchUserStats();
-  }, [puzzleUserId]);
+  }, [resolvedUserId]);
 
   // Fetch notification preferences on load
   useEffect(() => {
     const fetchNotificationPrefs = async () => {
-      if (!puzzleUserId) return;
+      if (!resolvedUserId) return;
       
       try {
-        const response = await fetch(`/api/user/notifications?userId=${puzzleUserId}`);
+        const response = await fetch(`/api/user/notifications?userId=${resolvedUserId}`);
         if (response.ok) {
           const prefs = await response.json();
           setNotificationPrefs(prefs);
@@ -210,7 +270,7 @@ export function ProfileScreen() {
     };
 
     fetchNotificationPrefs();
-  }, [puzzleUserId]);
+  }, [resolvedUserId]);
 
   // Toggle a notification preference
   const toggleNotificationPref = async (key: keyof NotificationPreferences) => {
@@ -234,7 +294,7 @@ export function ProfileScreen() {
     setNotificationPrefs(newPrefs);
     
     // Save to server
-    if (!puzzleUserId) {
+    if (!resolvedUserId) {
       console.log('[Notifications] No userId - preferences updated locally only');
       return;
     }
@@ -244,7 +304,7 @@ export function ProfileScreen() {
       await fetch('/api/user/notifications', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userId: puzzleUserId, ...newPrefs }),
+        body: JSON.stringify({ userId: resolvedUserId, ...newPrefs }),
       });
       console.log('[Notifications] Preferences saved');
     } catch (error) {
@@ -257,14 +317,13 @@ export function ProfileScreen() {
   // Fetch referral stats from API
   useEffect(() => {
     const fetchReferralStats = async () => {
-      if (!puzzleUserId) {
-        setIsLoading(false);
+      if (!resolvedUserId) {
         return;
       }
       
       setIsLoading(true);
       try {
-        const response = await fetch(`/api/referral/stats?userId=${puzzleUserId}`);
+        const response = await fetch(`/api/referral/stats?userId=${resolvedUserId}`);
         if (response.ok) {
           const data = await response.json();
           setReferralStats({
@@ -300,7 +359,7 @@ export function ProfileScreen() {
     };
 
     fetchReferralStats();
-  }, [puzzleUserId, storeReferralCode, storeReferralEarnings, storeTotalReferrals]);
+  }, [resolvedUserId, storeReferralCode, storeReferralEarnings, storeTotalReferrals]);
 
   return (
     <div className="flex flex-col min-h-full p-4 pb-24">
