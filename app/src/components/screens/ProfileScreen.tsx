@@ -686,4 +686,3 @@ export function ProfileScreen() {
     </div>
   );
 }
-

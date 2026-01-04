@@ -82,6 +82,7 @@ export async function getOrCreateUser(
         current_streak: 0,
         longest_streak: 0,
         has_streak_insurance: false,
+        insurance_streak: 0,
         last_played_date: null,
         referral_earnings: 0,
         total_referrals: 0,
@@ -777,13 +778,32 @@ export async function getLeaderboard(limit: number = 10): Promise<User[]> {
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const db = supabase as any;
+  // Only show users who have played at least 1 game
   const { data } = await db
     .from('users')
     .select('*')
+    .gt('total_games_played', 0)
     .order('total_earnings', { ascending: false })
     .limit(limit);
   
   return (data || []) as User[];
+}
+
+/**
+ * Get total count of users who have played at least 1 game
+ */
+export async function getTotalPlayersCount(): Promise<number> {
+  const supabase = getDb();
+  if (!supabase) return 0;
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const db = supabase as any;
+  const { count } = await db
+    .from('users')
+    .select('*', { count: 'exact', head: true })
+    .gt('total_games_played', 0);
+  
+  return count || 0;
 }
 
 export async function getFastestSolvers(date: string = getTodayDate(), limit: number = 10) {

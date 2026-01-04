@@ -87,6 +87,47 @@ function calculateReferralCommissionRate(taxPercent: number): number {
   return BASE_REFERRAL_RATE * (taxPercent / 20);
 }
 
+/**
+ * Timeout wrapper - rejects if operation takes too long
+ */
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number, operation: string): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<T>((_, reject) => 
+      setTimeout(() => reject(new Error(`${operation} timed out after ${timeoutMs}ms`)), timeoutMs)
+    )
+  ]);
+}
+
+/**
+ * Retry helper for blockchain transactions
+ * Retries up to 3 times with exponential backoff
+ */
+async function withRetry<T>(
+  fn: () => Promise<T>,
+  maxRetries: number = 3,
+  baseDelay: number = 1000
+): Promise<T> {
+  let lastError: Error | undefined;
+  
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      return await fn();
+    } catch (err) {
+      lastError = err instanceof Error ? err : new Error(String(err));
+      console.log(`[Distribute] Attempt ${attempt}/${maxRetries} failed: ${lastError.message}`);
+      
+      if (attempt < maxRetries) {
+        const delay = baseDelay * Math.pow(2, attempt - 1);
+        console.log(`[Distribute] Retrying in ${delay}ms...`);
+        await new Promise(resolve => setTimeout(resolve, delay));
+      }
+    }
+  }
+  
+  throw lastError;
+}
+
 async function sendPrizeNotification(
   walletAddress: string,
   username: string,
@@ -159,15 +200,47 @@ async function distributePrizes(puzzleDate: string): Promise<DistributionResult>
   
   const typedEntries = entries as unknown as EntryWithUser[];
   
-  // Calculate stats
+  // Connect to blockchain first to get actual balance
+  const provider = new ethers.JsonRpcProvider(RPC_URL);
+  const wallet = new ethers.Wallet(PAYOUT_WALLET_KEY, provider);
+  const usdc = new ethers.Contract(USDC_ADDRESS, USDC_ABI, wallet);
+  
+  // Get actual USDC balance in prize pool wallet
+  const balance = await withRetry(() => usdc.balanceOf(wallet.address));
+  const balanceUSDC = Number(ethers.formatUnits(balance, 6));
+  
+  console.log(`[Distribute] Prize pool balance: $${balanceUSDC.toFixed(2)} USDC`);
+  
+  // Count winners (status === 'won')
   const totalPlayers = typedEntries.length;
-  const totalPool = totalPlayers * ENTRY_FEE;
   const winners = typedEntries.filter(e => e.status === 'won');
-  const losers = typedEntries.filter(e => e.status === 'lost');
+  const nonWinners = typedEntries.filter(e => e.status !== 'won');
   const winnerCount = winners.length;
   
-  // Calculate dynamic tax rate
-  const winnerRatio = winnerCount / totalPlayers;
+  // Streak insurance - calculate obligation first (reserved from balance)
+  const insuranceRecipients = nonWinners.filter(e => e.users.has_streak_insurance === true);
+  const insurancePerPerson = ENTRY_FEE * 0.50;
+  const totalInsuranceNeeded = insuranceRecipients.length * insurancePerPerson;
+  
+  // Reserve insurance from balance first, then calculate prizes from remainder
+  // If balance can't cover full insurance, reduce proportionally
+  let actualInsurancePayout = insurancePerPerson;
+  let insuranceReserve = totalInsuranceNeeded;
+  
+  if (balanceUSDC < totalInsuranceNeeded) {
+    // Not enough for full insurance - pay what we can proportionally
+    insuranceReserve = balanceUSDC;
+    actualInsurancePayout = insuranceRecipients.length > 0 
+      ? balanceUSDC / insuranceRecipients.length 
+      : 0;
+    console.log(`[Distribute] ⚠️ Insufficient balance for full insurance. Reduced to $${actualInsurancePayout.toFixed(2)} per person`);
+  }
+  
+  // Available balance for winners after insurance is reserved
+  const availableForWinners = Math.max(0, balanceUSDC - insuranceReserve);
+  
+  // Calculate dynamic platform fee based on winner ratio
+  const winnerRatio = totalPlayers > 0 ? winnerCount / totalPlayers : 0;
   let platformFeePercent: number;
   
   if (winnerRatio <= 0.80) {
@@ -178,29 +251,14 @@ async function distributePrizes(puzzleDate: string): Promise<DistributionResult>
     platformFeePercent = 0;
   }
   
-  const platformFee = totalPool * platformFeePercent;
-  const prizePool = totalPool - platformFee;
+  // Calculate prize distribution from available balance (after insurance)
+  const platformFee = availableForWinners * platformFeePercent;
+  const prizePool = availableForWinners - platformFee;
   const payoutPerWinner = winnerCount > 0 ? prizePool / winnerCount : 0;
   
-  // Streak insurance
-  const insuranceRecipients = losers.filter(e => e.users.has_streak_insurance === true);
-  const insurancePayout = ENTRY_FEE * 0.50;
-  
   console.log(`[Distribute] Players: ${totalPlayers}, Winners: ${winnerCount}, Tax: ${platformFeePercent * 100}%`);
-  
-  // Connect to blockchain
-  const provider = new ethers.JsonRpcProvider(RPC_URL);
-  const wallet = new ethers.Wallet(PAYOUT_WALLET_KEY, provider);
-  const usdc = new ethers.Contract(USDC_ADDRESS, USDC_ABI, wallet);
-  
-  // Check balance
-  const balance = await usdc.balanceOf(wallet.address);
-  const balanceUSDC = Number(ethers.formatUnits(balance, 6));
-  const totalNeeded = (winnerCount * payoutPerWinner) + (insuranceRecipients.length * insurancePayout);
-  
-  if (balanceUSDC < totalNeeded) {
-    throw new Error(`Insufficient balance! Need $${totalNeeded.toFixed(2)}, have $${balanceUSDC.toFixed(2)}`);
-  }
+  console.log(`[Distribute] Balance: $${balanceUSDC.toFixed(2)}, Insurance reserve: $${insuranceReserve.toFixed(2)}, Available for winners: $${availableForWinners.toFixed(2)}`);
+  console.log(`[Distribute] Prize per winner: $${payoutPerWinner.toFixed(2)}, Insurance per person: $${actualInsurancePayout.toFixed(2)}`)
   
   // Distribute prizes
   let successfulPayouts = 0;
@@ -209,16 +267,43 @@ async function distributePrizes(puzzleDate: string): Promise<DistributionResult>
   
   // Pay winners
   for (const winner of winners) {
-    if (!winner.users.wallet_address) {
+    const walletAddr = winner.users.wallet_address;
+    
+    if (!walletAddr) {
       console.log(`[Distribute] Skipping winner ${winner.id} - no wallet`);
       failedPayouts++;
       continue;
     }
     
+    console.log(`[Distribute] Processing winner ${winner.id.substring(0, 8)}... -> ${walletAddr.substring(0, 10)}...`);
+    
     try {
       const amount = ethers.parseUnits(payoutPerWinner.toFixed(6), 6);
-      const tx = await usdc.transfer(winner.users.wallet_address, amount);
-      await tx.wait();
+      console.log(`[Distribute] Amount: ${amount.toString()} (${payoutPerWinner.toFixed(6)} USDC)`);
+      
+      // Send transaction with timeout (60 seconds per attempt)
+      const tx = await withRetry(async () => {
+        console.log(`[Distribute] Sending transfer transaction...`);
+        
+        // Send with explicit gas limit to avoid estimation hanging
+        const transaction = await withTimeout(
+          usdc.transfer(walletAddr, amount, { gasLimit: 100000 }),
+          30000,
+          'transfer'
+        );
+        
+        console.log(`[Distribute] Transaction sent: ${transaction.hash}`);
+        console.log(`[Distribute] Waiting for confirmation...`);
+        
+        await withTimeout(
+          transaction.wait(1), // Wait for 1 confirmation
+          60000,
+          'confirmation'
+        );
+        
+        console.log(`[Distribute] Transaction confirmed!`);
+        return transaction;
+      });
       
       // Update game entry
       await supabase
@@ -241,66 +326,94 @@ async function distributePrizes(puzzleDate: string): Promise<DistributionResult>
       
       // Send notification
       await sendPrizeNotification(
-        winner.users.wallet_address,
+        walletAddr,
         winner.users.username || 'Player',
         payoutPerWinner
       );
       
       successfulPayouts++;
-      console.log(`[Distribute] Paid $${payoutPerWinner.toFixed(2)} to ${winner.users.wallet_address.substring(0, 10)}...`);
+      console.log(`[Distribute] ✅ Paid $${payoutPerWinner.toFixed(2)} to ${walletAddr.substring(0, 10)}...`);
     } catch (err) {
-      console.error(`[Distribute] Failed to pay ${winner.id}:`, err);
+      const errorMsg = err instanceof Error ? err.message : String(err);
+      console.error(`[Distribute] ❌ Failed to pay ${winner.id}: ${errorMsg}`);
       failedPayouts++;
     }
   }
   
   // Pay insurance
   for (const loser of insuranceRecipients) {
-    if (!loser.users.wallet_address) {
+    const walletAddr = loser.users.wallet_address;
+    
+    if (!walletAddr) {
       failedPayouts++;
       continue;
     }
     
+    console.log(`[Distribute] Processing insurance for ${loser.id.substring(0, 8)}...`);
+    
     try {
-      const amount = ethers.parseUnits(insurancePayout.toFixed(6), 6);
-      const tx = await usdc.transfer(loser.users.wallet_address, amount);
-      await tx.wait();
+      const amount = ethers.parseUnits(actualInsurancePayout.toFixed(6), 6);
+      
+      // Use retry for blockchain transactions with timeout
+      const tx = await withRetry(async () => {
+        const transaction = await withTimeout(
+          usdc.transfer(walletAddr, amount, { gasLimit: 100000 }),
+          30000,
+          'insurance transfer'
+        );
+        console.log(`[Distribute] Insurance tx sent: ${transaction.hash}`);
+        await withTimeout(transaction.wait(1), 60000, 'insurance confirmation');
+        return transaction;
+      });
       
       // Update database
       await supabase
         .from('game_entries')
-        .update({ streak_insurance_applied: true, refund_amount: insurancePayout, prize_transaction_hash: tx.hash })
+        .update({ streak_insurance_applied: true, refund_amount: actualInsurancePayout, prize_transaction_hash: tx.hash })
         .eq('id', loser.id);
       
-      // Consume insurance
+      // Consume insurance and reset insurance_streak counter
       await supabase
         .from('users')
-        .update({ has_streak_insurance: false })
+        .update({ has_streak_insurance: false, insurance_streak: 0 })
         .eq('id', loser.user_id);
       
       insurancePayouts++;
-      console.log(`[Distribute] Paid insurance $${insurancePayout.toFixed(2)} to ${loser.users.wallet_address.substring(0, 10)}...`);
+      console.log(`[Distribute] ✅ Paid insurance $${actualInsurancePayout.toFixed(2)} to ${walletAddr.substring(0, 10)}...`);
     } catch (err) {
-      console.error(`[Distribute] Failed insurance for ${loser.id}:`, err);
+      const errorMsg = err instanceof Error ? err.message : String(err);
+      console.error(`[Distribute] ❌ Failed insurance for ${loser.id}: ${errorMsg}`);
       failedPayouts++;
     }
   }
   
   // Sweep remaining to developer wallet
-  const remainingBalance = await usdc.balanceOf(wallet.address);
+  console.log(`[Distribute] Checking remaining balance for sweep...`);
+  const remainingBalance = await withRetry(() => usdc.balanceOf(wallet.address));
   const remainingUSDC = Number(ethers.formatUnits(remainingBalance, 6));
+  console.log(`[Distribute] Remaining balance: $${remainingUSDC.toFixed(2)}`);
   
   if (remainingUSDC > 0.01) {
     try {
-      const tx = await usdc.transfer(DEVELOPER_WALLET, remainingBalance);
-      await tx.wait();
-      console.log(`[Distribute] Swept $${remainingUSDC.toFixed(2)} to developer wallet`);
+      console.log(`[Distribute] Sweeping to developer wallet: ${DEVELOPER_WALLET?.substring(0, 10)}...`);
+      await withRetry(async () => {
+        const tx = await withTimeout(
+          usdc.transfer(DEVELOPER_WALLET, remainingBalance, { gasLimit: 100000 }),
+          30000,
+          'sweep transfer'
+        );
+        console.log(`[Distribute] Sweep tx sent: ${tx.hash}`);
+        await withTimeout(tx.wait(1), 60000, 'sweep confirmation');
+        return tx;
+      });
+      console.log(`[Distribute] ✅ Swept $${remainingUSDC.toFixed(2)} to developer wallet`);
     } catch (err) {
-      console.error('[Distribute] Failed to sweep:', err);
+      const errorMsg = err instanceof Error ? err.message : String(err);
+      console.error(`[Distribute] ❌ Failed to sweep: ${errorMsg}`);
     }
   }
   
-  const totalDistributed = (successfulPayouts * payoutPerWinner) + (insurancePayouts * insurancePayout);
+  const totalDistributed = (successfulPayouts * payoutPerWinner) + (insurancePayouts * actualInsurancePayout);
   
   return {
     success: true,
@@ -308,7 +421,7 @@ async function distributePrizes(puzzleDate: string): Promise<DistributionResult>
     stats: {
       totalPlayers,
       winners: winnerCount,
-      losers: losers.length,
+      losers: nonWinners.length,
       taxRate: platformFeePercent * 100,
       prizePerWinner: payoutPerWinner,
       totalDistributed,
@@ -365,12 +478,9 @@ export async function POST(request: NextRequest) {
   }
 }
 
-// Allow GET for manual testing in development
+// Vercel cron jobs send GET requests, so we need to handle them
 export async function GET(request: NextRequest) {
-  if (process.env.NODE_ENV === 'production') {
-    return NextResponse.json({ error: 'Method not allowed' }, { status: 405 });
-  }
-  
+  // Vercel cron jobs use GET - forward to main handler
   return POST(request);
 }
 

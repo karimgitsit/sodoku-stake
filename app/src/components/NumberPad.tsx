@@ -25,6 +25,12 @@ export function NumberPad() {
   const [isValidating, setIsValidating] = useState(false);
 
   const isDisabled = !selectedCell || gameLocked;
+  
+  // Check if selected cell already has a value (reveal would be useless)
+  const selectedCellHasValue = selectedCell && puzzle 
+    ? puzzle[selectedCell.row][selectedCell.col].value !== null
+    : false;
+  const isRevealDisabled = isDisabled || selectedCellHasValue;
 
   const handleHint = () => {
     if (!selectedCell || !puzzle) return;
@@ -62,8 +68,8 @@ export function NumberPad() {
         throw new Error('Payment confirmed but reveal value missing');
       }
       
-      // Set the revealed number in the puzzle
-      setNumber(payResult.value);
+      // Set the revealed number in the puzzle (forceValue=true to bypass notes mode)
+      setNumber(payResult.value, true);
       setShowHintConfirm(false);
       console.log('[Reveal] Cell revealed:', payResult.value);
       
@@ -206,12 +212,12 @@ export function NumberPad() {
 
         <button
           onClick={handleHint}
-          disabled={isDisabled}
+          disabled={isRevealDisabled}
           className={`
             flex items-center justify-center gap-1 py-3
             bg-card border border-border rounded-lg text-sm font-medium
             transition-all
-            ${isDisabled ? 'opacity-50 cursor-not-allowed' : 'hover:border-warning hover:text-warning'}
+            ${isRevealDisabled ? 'opacity-50 cursor-not-allowed' : 'hover:border-warning hover:text-warning'}
           `}
         >
           <span>💡</span>

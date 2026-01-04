@@ -25,6 +25,7 @@ CREATE TABLE IF NOT EXISTS users (
   current_streak INTEGER DEFAULT 0,
   longest_streak INTEGER DEFAULT 0,
   has_streak_insurance BOOLEAN DEFAULT FALSE,
+  insurance_streak INTEGER DEFAULT 0, -- Tracks consecutive days toward next insurance (resets when insurance is granted or consumed)
   last_played_date DATE,
   -- Referral system fields
   referral_earnings DECIMAL(10, 2) DEFAULT 0, -- Total earned from referrals
@@ -178,37 +179,47 @@ DECLARE
   old_streak INTEGER;
   new_streak INTEGER;
   old_insurance BOOLEAN;
+  old_insurance_streak INTEGER;
+  new_insurance_streak INTEGER;
 BEGIN
   -- Get user's current state
-  SELECT last_played_date, current_streak, has_streak_insurance 
-  INTO last_date, old_streak, old_insurance 
+  SELECT last_played_date, current_streak, has_streak_insurance, insurance_streak
+  INTO last_date, old_streak, old_insurance, old_insurance_streak
   FROM users WHERE id = NEW.user_id;
   
-  -- Handle NULL old_streak (first time user)
+  -- Handle NULLs (first time user)
   old_streak := COALESCE(old_streak, 0);
   old_insurance := COALESCE(old_insurance, FALSE);
+  old_insurance_streak := COALESCE(old_insurance_streak, 0);
   
-  -- Calculate new streak
+  -- Calculate new streak (consecutive days played)
   IF last_date IS NULL OR last_date < NEW.puzzle_date - INTERVAL '1 day' THEN
     -- Streak broken or first game
     new_streak := 1;
+    new_insurance_streak := 1;
   ELSIF last_date = NEW.puzzle_date - INTERVAL '1 day' THEN
-    -- Consecutive day - increment streak
+    -- Consecutive day - increment both streaks
     new_streak := old_streak + 1;
+    new_insurance_streak := old_insurance_streak + 1;
   ELSE
-    -- Same day - keep current streak
+    -- Same day - keep current values
     new_streak := old_streak;
+    new_insurance_streak := old_insurance_streak;
   END IF;
   
   -- Update user
-  -- Insurance is only GRANTED when streak reaches 7 (transition from <7 to >=7)
-  -- Once consumed (set to FALSE), it stays FALSE until streak drops below 7 and reaches 7 again
   UPDATE users SET
     current_streak = new_streak,
     longest_streak = GREATEST(longest_streak, new_streak),
+    -- Grant insurance when insurance_streak reaches 7 AND user doesn't have insurance
     has_streak_insurance = CASE
-      WHEN new_streak >= 7 AND old_streak < 7 THEN TRUE
+      WHEN new_insurance_streak >= 7 AND old_insurance = FALSE THEN TRUE
       ELSE old_insurance
+    END,
+    -- Reset insurance_streak to 0 when insurance is granted
+    insurance_streak = CASE
+      WHEN new_insurance_streak >= 7 AND old_insurance = FALSE THEN 0
+      ELSE new_insurance_streak
     END,
     last_played_date = NEW.puzzle_date,
     total_games_played = total_games_played + 1,

@@ -109,15 +109,11 @@ export async function POST(request: NextRequest) {
           const currentStreak = updatedUser.current_streak + 1; // +1 for this win
           const estimatedNewEarnings = updatedUser.total_earnings + taxBreakdown.prizePerWinner;
           
-          // Update user stats (increment wins and streak)
+          // Update user stats (increment wins)
+          // NOTE: current_streak, longest_streak, last_played_date, and has_streak_insurance
+          // are handled by the database trigger on game entry creation - don't override here
           await updateUser(user.id, {
             total_wins: totalWins,
-            total_games_played: updatedUser.total_games_played + 1,
-            current_streak: currentStreak,
-            longest_streak: Math.max(updatedUser.longest_streak, currentStreak),
-            last_played_date: today,
-            // Grant streak insurance at 7+ day streak
-            has_streak_insurance: currentStreak >= 7 ? true : updatedUser.has_streak_insurance,
           });
           
           // 1. First win notification

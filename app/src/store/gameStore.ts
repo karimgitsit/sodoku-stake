@@ -100,7 +100,7 @@ interface GameState {
   }) => void;
   selectCell: (row: number, col: number) => void;
   clearSelection: () => void;
-  setNumber: (num: number) => void;
+  setNumber: (num: number, forceValue?: boolean) => void;
   setNumberWithValidation: (num: number) => Promise<{ correct: boolean; message?: string }>;
   clearCell: () => void;
   toggleNotesMode: () => void;
@@ -445,7 +445,7 @@ export const useGameStore = create<GameState>((set, get) => ({
 
   clearSelection: () => set({ selectedCell: null }),
 
-  setNumber: (num) => {
+  setNumber: (num, forceValue = false) => {
     const { puzzle, selectedCell, notesMode, gameLocked } = get();
     if (!puzzle || !selectedCell || gameLocked) return;
 
@@ -454,7 +454,8 @@ export const useGameStore = create<GameState>((set, get) => ({
 
     get().pushHistory();
 
-    if (notesMode) {
+    // forceValue bypasses notes mode (used by REVEAL feature)
+    if (notesMode && !forceValue) {
       get().toggleNote(num);
     } else {
       const newPuzzle = cloneGrid(puzzle);
