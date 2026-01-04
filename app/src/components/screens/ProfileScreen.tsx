@@ -32,6 +32,17 @@ interface NotificationPreferences {
   notify_results: boolean;
 }
 
+interface UserStats {
+  totalGames: number;
+  totalWins: number;
+  winRate: number;
+  totalEarnings: number;
+  currentStreak: number;
+  longestStreak: number;
+  hasStreakInsurance: boolean;
+  rank: number | null;
+}
+
 export function ProfileScreen() {
   const { 
     currentStreak,
@@ -49,7 +60,9 @@ export function ProfileScreen() {
   const displayUsername = miniKitUsername || 'Anonymous';
 
   const [referralStats, setReferralStats] = useState<ReferralStats | null>(null);
+  const [userStats, setUserStats] = useState<UserStats | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+  const [isLoadingStats, setIsLoadingStats] = useState(true);
   const [copySuccess, setCopySuccess] = useState(false);
   const [shareSuccess, setShareSuccess] = useState(false);
   const [showNotificationSettings, setShowNotificationSettings] = useState(false);
@@ -63,14 +76,16 @@ export function ProfileScreen() {
   });
   const [savingPrefs, setSavingPrefs] = useState(false);
 
-  // Mock stats (will be replaced with real data)
-  const stats = {
-    totalGames: 23,
-    totalWins: 14,
-    winRate: 61,
-    totalEarnings: 12.47,
-    longestStreak: 12,
-    rank: 847,
+  // Use fetched stats or defaults
+  const stats = userStats || {
+    totalGames: 0,
+    totalWins: 0,
+    winRate: 0,
+    totalEarnings: 0,
+    currentStreak: 0,
+    longestStreak: 0,
+    hasStreakInsurance: false,
+    rank: null,
   };
 
   // Use store values or API values
@@ -142,6 +157,42 @@ export function ProfileScreen() {
     }
   };
 
+  // Fetch user stats from API
+  useEffect(() => {
+    const fetchUserStats = async () => {
+      if (!puzzleUserId) {
+        setIsLoadingStats(false);
+        return;
+      }
+      
+      setIsLoadingStats(true);
+      try {
+        const response = await fetch(`/api/user/stats?userId=${puzzleUserId}`);
+        if (response.ok) {
+          const data = await response.json();
+          if (data.success && data.stats) {
+            setUserStats({
+              totalGames: data.stats.totalGames,
+              totalWins: data.stats.totalWins,
+              winRate: data.stats.winRate,
+              totalEarnings: data.stats.totalEarnings,
+              currentStreak: data.stats.currentStreak,
+              longestStreak: data.stats.longestStreak,
+              hasStreakInsurance: data.stats.hasStreakInsurance,
+              rank: data.stats.rank,
+            });
+          }
+        }
+      } catch (error) {
+        console.error('[Profile] Failed to fetch user stats:', error);
+      } finally {
+        setIsLoadingStats(false);
+      }
+    };
+
+    fetchUserStats();
+  }, [puzzleUserId]);
+
   // Fetch notification preferences on load
   useEffect(() => {
     const fetchNotificationPrefs = async () => {
@@ -206,36 +257,50 @@ export function ProfileScreen() {
   // Fetch referral stats from API
   useEffect(() => {
     const fetchReferralStats = async () => {
-      // For now, use mock data in development
-      // In production, this would call the API
+      if (!puzzleUserId) {
+        setIsLoading(false);
+        return;
+      }
+      
       setIsLoading(true);
       try {
-        // TODO: Replace with actual API call when userId is available
-        // const response = await fetch(`/api/referral/stats?userId=${userId}`);
-        // const data = await response.json();
-        // setReferralStats(data);
-        
-        // Mock data for now
-        setReferralStats({
-          referralCode: storeReferralCode || 'STAKE' + Math.random().toString(36).substring(2, 6).toUpperCase(),
-          totalReferrals: 3,
-          totalEarnings: 1.20,
-          unpaidEarnings: 0.30,
-          recentEarnings: [
-            { id: '1', sourceType: 'entry', amount: 0.10, commissionRate: 0.10, date: '2025-12-03', paidOut: true },
-            { id: '2', sourceType: 'entry', amount: 0.10, commissionRate: 0.10, date: '2025-12-03', paidOut: true },
-            { id: '3', sourceType: 'reveal', amount: 0.02, commissionRate: 0.10, date: '2025-12-02', paidOut: false },
-          ],
-        });
+        const response = await fetch(`/api/referral/stats?userId=${puzzleUserId}`);
+        if (response.ok) {
+          const data = await response.json();
+          setReferralStats({
+            referralCode: data.referralCode,
+            totalReferrals: data.totalReferrals,
+            totalEarnings: data.totalEarnings,
+            unpaidEarnings: data.unpaidEarnings,
+            recentEarnings: data.recentEarnings || [],
+          });
+        } else {
+          // If user not found or error, use store values as fallback
+          setReferralStats({
+            referralCode: storeReferralCode || '',
+            totalReferrals: storeTotalReferrals || 0,
+            totalEarnings: storeReferralEarnings || 0,
+            unpaidEarnings: 0,
+            recentEarnings: [],
+          });
+        }
       } catch (error) {
-        console.error('Failed to fetch referral stats:', error);
+        console.error('[Profile] Failed to fetch referral stats:', error);
+        // Use store values as fallback on error
+        setReferralStats({
+          referralCode: storeReferralCode || '',
+          totalReferrals: storeTotalReferrals || 0,
+          totalEarnings: storeReferralEarnings || 0,
+          unpaidEarnings: 0,
+          recentEarnings: [],
+        });
       } finally {
         setIsLoading(false);
       }
     };
 
     fetchReferralStats();
-  }, [storeReferralCode]);
+  }, [puzzleUserId, storeReferralCode, storeReferralEarnings, storeTotalReferrals]);
 
   return (
     <div className="flex flex-col min-h-full p-4 pb-24">
@@ -253,15 +318,19 @@ export function ProfileScreen() {
         <div className="flex items-center justify-between">
           <div>
             <p className="text-sm text-muted">Current Streak</p>
-            <p className="text-3xl font-bold streak-badge">🔥 {currentStreak}</p>
+            <p className="text-3xl font-bold streak-badge">
+              🔥 {isLoadingStats ? '...' : (stats.currentStreak ?? currentStreak)}
+            </p>
           </div>
           <div className="text-right">
             <p className="text-sm text-muted">Best Streak</p>
-            <p className="text-2xl font-bold">{stats.longestStreak}</p>
+            <p className="text-2xl font-bold">
+              {isLoadingStats ? '...' : stats.longestStreak}
+            </p>
           </div>
         </div>
         
-        {hasStreakInsurance && (
+        {(stats.hasStreakInsurance || hasStreakInsurance) && (
           <div className="mt-3 pt-3 border-t border-border">
             <div className="flex items-center gap-2 text-success">
               <span>🛡️</span>
@@ -277,19 +346,27 @@ export function ProfileScreen() {
       {/* Stats Grid */}
       <div className="grid grid-cols-2 gap-3 mb-4">
         <div className="bg-card border border-border rounded-xl p-4">
-          <p className="text-2xl font-bold">{stats.totalGames}</p>
+          <p className="text-2xl font-bold">
+            {isLoadingStats ? '...' : stats.totalGames}
+          </p>
           <p className="text-xs text-muted">Games Played</p>
         </div>
         <div className="bg-card border border-border rounded-xl p-4">
-          <p className="text-2xl font-bold text-success">{stats.totalWins}</p>
+          <p className="text-2xl font-bold text-success">
+            {isLoadingStats ? '...' : stats.totalWins}
+          </p>
           <p className="text-xs text-muted">Wins</p>
         </div>
         <div className="bg-card border border-border rounded-xl p-4">
-          <p className="text-2xl font-bold">{stats.winRate}%</p>
+          <p className="text-2xl font-bold">
+            {isLoadingStats ? '...' : `${stats.winRate}%`}
+          </p>
           <p className="text-xs text-muted">Win Rate</p>
         </div>
         <div className="bg-card border border-border rounded-xl p-4">
-          <p className="text-2xl font-bold text-primary">${stats.totalEarnings.toFixed(2)}</p>
+          <p className="text-2xl font-bold text-primary">
+            {isLoadingStats ? '...' : `$${stats.totalEarnings.toFixed(2)}`}
+          </p>
           <p className="text-xs text-muted">Total Earnings</p>
         </div>
       </div>
@@ -299,7 +376,9 @@ export function ProfileScreen() {
         <div className="flex items-center justify-between">
           <div>
             <p className="text-sm text-muted">Global Rank</p>
-            <p className="text-2xl font-bold">#{stats.rank}</p>
+            <p className="text-2xl font-bold">
+              {isLoadingStats ? '...' : (stats.rank ? `#${stats.rank}` : 'Unranked')}
+            </p>
           </div>
           <div className="text-4xl">🏆</div>
         </div>
@@ -403,7 +482,7 @@ export function ProfileScreen() {
       <div className="bg-card border border-border rounded-2xl p-4 mb-4">
         <h3 className="font-bold mb-3">Badges</h3>
         <div className="flex flex-wrap gap-2">
-          {currentStreak >= 7 && (
+          {(stats.currentStreak ?? currentStreak) >= 7 && (
             <div className="bg-primary/20 border border-primary/50 rounded-lg px-3 py-1 text-sm">
               🔥 7-Day Streak
             </div>

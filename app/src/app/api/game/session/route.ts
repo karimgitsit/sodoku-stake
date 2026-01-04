@@ -49,9 +49,15 @@ export async function GET(request: NextRequest) {
     
     if (!entry) {
       // No active session - user needs to pay to start a new game
+      // But still return user stats for streak display
       return NextResponse.json({
         success: true,
         hasSession: false,
+        userStats: {
+          currentStreak: user.current_streak || 0,
+          longestStreak: user.longest_streak || 0,
+          hasStreakInsurance: user.has_streak_insurance || false,
+        },
       });
     }
 
@@ -74,6 +80,11 @@ export async function GET(request: NextRequest) {
       mistakesCount: entry.mistakes_count || 0,
       maxMistakes: entry.max_mistakes || 3,
       gameLocked: entry.game_locked || false,
+      userStats: {
+        currentStreak: user.current_streak || 0,
+        longestStreak: user.longest_streak || 0,
+        hasStreakInsurance: user.has_streak_insurance || false,
+      },
     });
 
   } catch (error) {

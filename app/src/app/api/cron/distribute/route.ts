@@ -220,11 +220,24 @@ async function distributePrizes(puzzleDate: string): Promise<DistributionResult>
       const tx = await usdc.transfer(winner.users.wallet_address, amount);
       await tx.wait();
       
-      // Update database
+      // Update game entry
       await supabase
         .from('game_entries')
         .update({ prize_amount: payoutPerWinner, prize_transaction_hash: tx.hash })
         .eq('id', winner.id);
+      
+      // Update user's total earnings
+      const { data: userData } = await supabase
+        .from('users')
+        .select('total_earnings')
+        .eq('id', winner.user_id)
+        .single();
+      
+      const currentEarnings = userData?.total_earnings || 0;
+      await supabase
+        .from('users')
+        .update({ total_earnings: currentEarnings + payoutPerWinner })
+        .eq('id', winner.user_id);
       
       // Send notification
       await sendPrizeNotification(

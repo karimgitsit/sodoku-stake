@@ -22,6 +22,11 @@ interface SessionResponse {
   maxMistakes?: number;
   gameLocked?: boolean;
   error?: string;
+  userStats?: {
+    currentStreak: number;
+    longestStreak: number;
+    hasStreakInsurance: boolean;
+  };
 }
 
 export function HomeScreen() {
@@ -117,6 +122,16 @@ export function HomeScreen() {
           return;
         }
         
+        // Update user info with streak from API if available
+        if (data.userStats) {
+          setUserInfo({
+            username: miniKitUsername || 'Player',
+            walletAddress: '',
+            streak: data.userStats.currentStreak,
+            insurance: data.userStats.hasStreakInsurance,
+          });
+        }
+
         if (data.hasSession && data.puzzle && data.date && data.entryId) {
           console.log(`[HomeScreen] Found existing session: status=${data.status}, mistakes=${data.mistakesCount}/${data.maxMistakes}`);
           
@@ -130,14 +145,6 @@ export function HomeScreen() {
             mistakesCount: data.mistakesCount || 0,
             maxMistakes: data.maxMistakes || 3,
             gameLocked: data.gameLocked || false,
-          });
-          
-          // Update user info with MiniKit username
-          setUserInfo({
-            username: miniKitUsername || 'Player',
-            walletAddress: '',
-            streak: currentStreak,
-            insurance: hasStreakInsurance,
           });
           
           // Set appropriate game status
@@ -240,13 +247,7 @@ export function HomeScreen() {
       const userId = verifyResult.nullifierHash!;
       console.log('[Entry] World ID verified:', userId.substring(0, 16) + '...');
       
-      // Update user info in store with MiniKit username
-      setUserInfo({
-        username: miniKitUsername || 'Player',
-        walletAddress: '', // Will be populated from MiniKit
-        streak: currentStreak,
-        insurance: hasStreakInsurance,
-      });
+      // User info will be updated after payment confirmation (with real streak from API)
       
       // Step 2: Process payment (secure backend-first flow)
       // This now does: initiate → pay → confirm, and returns puzzle on success
@@ -272,6 +273,16 @@ export function HomeScreen() {
       console.log(`📅 Date: ${payResult.date}`);
       console.log(`📊 Difficulty: ${payResult.difficulty}`);
       console.log(`🎫 Entry ID: ${payResult.entryId}`);
+      
+      // Update user info with streak from payment confirmation
+      if (payResult.userStats) {
+        setUserInfo({
+          username: miniKitUsername || 'Player',
+          walletAddress: '',
+          streak: payResult.userStats.currentStreak,
+          insurance: payResult.userStats.hasStreakInsurance,
+        });
+      }
       
       // Set puzzle in store (puzzle comes from payment confirmation)
       setPuzzleFromServer(payResult.puzzle, payResult.date, userId, payResult.entryId);

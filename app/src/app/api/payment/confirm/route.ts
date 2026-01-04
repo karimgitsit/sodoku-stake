@@ -274,6 +274,11 @@ async function handleEntryPayment(
     date: puzzleDate,
     difficulty,
     entryId: entry.id,
+    userStats: {
+      currentStreak: user.current_streak || 0,
+      longestStreak: user.longest_streak || 0,
+      hasStreakInsurance: user.has_streak_insurance || false,
+    },
   });
 }
 

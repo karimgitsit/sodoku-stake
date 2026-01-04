@@ -92,6 +92,12 @@ export interface PaymentResult {
   mistakesCount?: number;
   maxMistakes?: number;
   gameLocked?: boolean;
+  // User stats (returned from session/payment APIs)
+  userStats?: {
+    currentStreak: number;
+    longestStreak: number;
+    hasStreakInsurance: boolean;
+  };
 }
 
 export interface InitiatePaymentResponse {
@@ -120,6 +126,12 @@ export interface ConfirmPaymentResponse {
   mistakesCount?: number;
   maxMistakes?: number;
   gameLocked?: boolean;
+  // User stats (returned from payment confirm)
+  userStats?: {
+    currentStreak: number;
+    longestStreak: number;
+    hasStreakInsurance: boolean;
+  };
 }
 
 // =============================================================================
@@ -429,6 +441,7 @@ export async function payEntryFee(
     date: confirmResult.date,
     difficulty: confirmResult.difficulty,
     entryId: confirmResult.entryId,
+    userStats: confirmResult.userStats,
   };
 }
 
