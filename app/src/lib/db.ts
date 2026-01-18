@@ -774,23 +774,37 @@ export async function getTodayStats(date: string = getTodayDate()): Promise<{
     .select('*', { count: 'exact', head: true })
     .eq('puzzle_date', date)
     .eq('status', 'won');
-  
+
   const players = totalPlayers || 0;
   const winnerCount = winners || 0;
-  
-  // Use dynamic tax calculation
+
+  // Use dynamic tax calculation for estimated values
   const taxBreakdown = calculateTaxBreakdown(players, winnerCount);
-  
+
   // Success rate = percentage of players who DIDN'T solve (losers)
   const successRate = players > 0 ? Math.round((1 - winnerCount / players) * 100) : 0;
-  
-  return { 
-    players, 
-    winners: winnerCount, 
-    pool: taxBreakdown.prizePool, 
+
+  // Check if prizes have been distributed (prize_amount will be set after distribution)
+  // This ensures we show actual amounts for past dates instead of calculated estimates
+  const { data: winnerWithPrize } = await db
+    .from('game_entries')
+    .select('prize_amount')
+    .eq('puzzle_date', date)
+    .eq('status', 'won')
+    .not('prize_amount', 'is', null)
+    .limit(1)
+    .single();
+
+  // Use actual prize amount if distribution has occurred, otherwise use calculated estimate
+  const actualPrizePerWinner = winnerWithPrize?.prize_amount ?? null;
+
+  return {
+    players,
+    winners: winnerCount,
+    pool: taxBreakdown.prizePool,
     successRate,
     taxRate: taxBreakdown.taxRate,
-    prizePerWinner: taxBreakdown.prizePerWinner,
+    prizePerWinner: actualPrizePerWinner !== null ? actualPrizePerWinner : taxBreakdown.prizePerWinner,
   };
 }
 
