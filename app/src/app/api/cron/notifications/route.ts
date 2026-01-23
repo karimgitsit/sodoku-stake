@@ -72,10 +72,10 @@ export async function POST(request: NextRequest) {
     hour: currentHour,
     date: today,
     notifications: {
-      streakRisk: { sent: 0, skipped: 0, errors: 0 },
-      deadline: { sent: 0, skipped: 0, errors: 0 },
-      incomplete: { sent: 0, skipped: 0, errors: 0 },
-      newPuzzle: { sent: 0, skipped: 0, errors: 0 },
+      streakRisk: { sent: 0, skipped: 0, noWallet: 0, errors: 0 },
+      deadline: { sent: 0, skipped: 0, noWallet: 0, errors: 0 },
+      incomplete: { sent: 0, skipped: 0, noWallet: 0, errors: 0 },
+      newPuzzle: { sent: 0, skipped: 0, noWallet: 0, errors: 0 },
     },
     totalDuration: 0,
   };
@@ -107,12 +107,25 @@ export async function POST(request: NextRequest) {
     
     results.totalDuration = Date.now() - startTime;
     
+    // Calculate total users skipped due to missing wallet addresses
+    const totalNoWallet = 
+      results.notifications.streakRisk.noWallet +
+      results.notifications.deadline.noWallet +
+      results.notifications.incomplete.noWallet +
+      results.notifications.newPuzzle.noWallet;
+    
     console.log('\n[Cron] === Summary ===');
-    console.log(`[Cron] Streak Risk: ${results.notifications.streakRisk.sent} sent, ${results.notifications.streakRisk.skipped} skipped`);
-    console.log(`[Cron] Deadline: ${results.notifications.deadline.sent} sent, ${results.notifications.deadline.skipped} skipped`);
-    console.log(`[Cron] Incomplete: ${results.notifications.incomplete.sent} sent, ${results.notifications.incomplete.skipped} skipped`);
-    console.log(`[Cron] New Puzzle: ${results.notifications.newPuzzle.sent} sent, ${results.notifications.newPuzzle.skipped} skipped`);
+    console.log(`[Cron] Streak Risk: ${results.notifications.streakRisk.sent} sent, ${results.notifications.streakRisk.skipped} skipped, ${results.notifications.streakRisk.noWallet} no wallet`);
+    console.log(`[Cron] Deadline: ${results.notifications.deadline.sent} sent, ${results.notifications.deadline.skipped} skipped, ${results.notifications.deadline.noWallet} no wallet`);
+    console.log(`[Cron] Incomplete: ${results.notifications.incomplete.sent} sent, ${results.notifications.incomplete.skipped} skipped, ${results.notifications.incomplete.noWallet} no wallet`);
+    console.log(`[Cron] New Puzzle: ${results.notifications.newPuzzle.sent} sent, ${results.notifications.newPuzzle.skipped} skipped, ${results.notifications.newPuzzle.noWallet} no wallet`);
     console.log(`[Cron] Duration: ${results.totalDuration}ms`);
+    
+    // Warn if many users are missing wallet addresses
+    if (totalNoWallet > 0) {
+      console.log(`\n[Cron] ⚠️ WARNING: ${totalNoWallet} users skipped due to missing wallet addresses.`);
+      console.log(`[Cron] Run 'npx tsx scripts/recover-wallets.ts' to backfill from transaction history.`);
+    }
     
     return NextResponse.json({
       success: true,
@@ -144,6 +157,7 @@ export async function GET(request: NextRequest) {
 interface NotificationStats {
   sent: number;
   skipped: number;
+  noWallet: number;  // Users skipped specifically because they have no wallet address
   errors: number;
 }
 
@@ -151,14 +165,14 @@ interface NotificationStats {
  * Send streak risk notifications to users with active streaks who haven't played
  */
 async function sendStreakRiskNotifications(today: string): Promise<NotificationStats> {
-  const stats: NotificationStats = { sent: 0, skipped: 0, errors: 0 };
+  const stats: NotificationStats = { sent: 0, skipped: 0, noWallet: 0, errors: 0 };
   
   const users = await getUsersForStreakRiskNotification(today);
   console.log(`[Cron] Found ${users.length} users with streak risk`);
   
   for (const user of users) {
     if (!user.wallet_address) {
-      stats.skipped++;
+      stats.noWallet++;
       continue;
     }
     
@@ -191,7 +205,7 @@ async function sendStreakRiskNotifications(today: string): Promise<NotificationS
  * Send deadline reminder notifications to users who haven't started today's puzzle
  */
 async function sendDeadlineNotifications(today: string): Promise<NotificationStats> {
-  const stats: NotificationStats = { sent: 0, skipped: 0, errors: 0 };
+  const stats: NotificationStats = { sent: 0, skipped: 0, noWallet: 0, errors: 0 };
   
   const users = await getUsersForDeadlineReminder(today);
   const playerCount = await getTodayPlayerCount(today);
@@ -201,7 +215,7 @@ async function sendDeadlineNotifications(today: string): Promise<NotificationSta
   
   for (const user of users) {
     if (!user.wallet_address) {
-      stats.skipped++;
+      stats.noWallet++;
       continue;
     }
     
@@ -234,14 +248,14 @@ async function sendDeadlineNotifications(today: string): Promise<NotificationSta
  * Send incomplete puzzle notifications to users who started but didn't submit
  */
 async function sendIncompleteNotifications(today: string): Promise<NotificationStats> {
-  const stats: NotificationStats = { sent: 0, skipped: 0, errors: 0 };
+  const stats: NotificationStats = { sent: 0, skipped: 0, noWallet: 0, errors: 0 };
   
   const users = await getUsersWithIncompletePuzzles(today);
   console.log(`[Cron] Found ${users.length} users with incomplete puzzles`);
   
   for (const user of users) {
     if (!user.wallet_address) {
-      stats.skipped++;
+      stats.noWallet++;
       continue;
     }
     
@@ -272,7 +286,7 @@ async function sendIncompleteNotifications(today: string): Promise<NotificationS
  * Send new puzzle notifications to most engaged users
  */
 async function sendNewPuzzleNotifications(): Promise<NotificationStats> {
-  const stats: NotificationStats = { sent: 0, skipped: 0, errors: 0 };
+  const stats: NotificationStats = { sent: 0, skipped: 0, noWallet: 0, errors: 0 };
   
   const users = await getEngagedUsersForNewPuzzle();
   const yesterdayResults = await getYesterdayResults();
@@ -290,7 +304,7 @@ async function sendNewPuzzleNotifications(): Promise<NotificationStats> {
   
   for (const user of users) {
     if (!user.wallet_address) {
-      stats.skipped++;
+      stats.noWallet++;
       continue;
     }
     

@@ -91,9 +91,10 @@ export async function getOrCreateUser(
       };
       memoryCache.users.set(worldIdHash, user);
     } else {
-      // Update wallet address and/or username if provided and not already set
+      // Update wallet address and/or username if provided
+      // Always update wallet address if different (transaction data is most reliable)
       let updated = false;
-      if (walletAddress && !user.wallet_address) {
+      if (walletAddress && walletAddress !== user.wallet_address) {
         user.wallet_address = walletAddress;
         updated = true;
       }
@@ -119,7 +120,8 @@ export async function getOrCreateUser(
   
   if (existingUser) {
     // Check if we need to update wallet address or username
-    const needsWalletUpdate = walletAddress && !existingUser.wallet_address;
+    // Always update wallet address if provided and different (transaction data is most reliable)
+    const needsWalletUpdate = walletAddress && walletAddress !== existingUser.wallet_address;
     const needsUsernameUpdate = username && !existingUser.username;
     
     if (needsWalletUpdate || needsUsernameUpdate) {
