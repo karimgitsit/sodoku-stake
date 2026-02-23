@@ -295,6 +295,62 @@ export interface Database {
           created_at?: string;
         };
       };
+      payment_references: {
+        Row: {
+          id: string;
+          reference: string;
+          user_id: string;
+          type: string;
+          puzzle_date: string;
+          cell_row: number | null;
+          cell_col: number | null;
+          game_entry_id: string | null;
+          amount: number;
+          token_amount: string;
+          status: string;
+          transaction_id: string | null;
+          error_message: string | null;
+          created_at: string;
+          updated_at: string;
+          expires_at: string;
+        };
+        Insert: {
+          id?: string;
+          reference: string;
+          user_id: string;
+          type: string;
+          puzzle_date: string;
+          cell_row?: number | null;
+          cell_col?: number | null;
+          game_entry_id?: string | null;
+          amount: number;
+          token_amount: string;
+          status?: string;
+          transaction_id?: string | null;
+          error_message?: string | null;
+          created_at?: string;
+          updated_at?: string;
+          expires_at?: string;
+        };
+        Update: {
+          id?: string;
+          reference?: string;
+          user_id?: string;
+          type?: string;
+          puzzle_date?: string;
+          cell_row?: number | null;
+          cell_col?: number | null;
+          game_entry_id?: string | null;
+          amount?: number;
+          token_amount?: string;
+          status?: string;
+          transaction_id?: string | null;
+          error_message?: string | null;
+          created_at?: string;
+          updated_at?: string;
+          expires_at?: string;
+        };
+      };
       extra_life_transactions: {
         Row: {
           id: string;

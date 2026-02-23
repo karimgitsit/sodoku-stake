@@ -14,10 +14,11 @@ CREATE TABLE IF NOT EXISTS payment_references (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   reference TEXT UNIQUE NOT NULL, -- UUID without dashes (32 chars)
   user_id TEXT NOT NULL, -- World ID nullifier hash (before user record created)
-  type TEXT NOT NULL CHECK (type IN ('entry', 'reveal')),
+  type TEXT NOT NULL CHECK (type IN ('entry', 'reveal', 'extra_life')),
   puzzle_date DATE NOT NULL,
   cell_row INTEGER CHECK (cell_row >= 0 AND cell_row <= 8),
   cell_col INTEGER CHECK (cell_col >= 0 AND cell_col <= 8),
+  game_entry_id TEXT, -- Used for extra_life payments
   amount DECIMAL(10, 2) NOT NULL, -- Human-readable amount ($1.00 or $0.20)
   token_amount TEXT NOT NULL, -- Amount in smallest unit for MiniKit
   status TEXT DEFAULT 'pending' CHECK (status IN ('pending', 'completed', 'failed', 'expired')),

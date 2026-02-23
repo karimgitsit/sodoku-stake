@@ -1,34 +1,24 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { Tokens, tokenToDecimals } from '@worldcoin/minikit-js';
 import { getOrCreateUser, getUserEntry } from '@/lib/db';
+import { getServerClient } from '@/lib/supabase';
 
 /**
  * POST /api/payment/initiate
- * 
+ *
  * Initiates a payment by generating a secure reference ID.
- * This reference is stored server-side and used to verify the payment later.
- * 
+ * This reference is stored in Supabase and used to verify the payment later.
+ *
  * IMPORTANT: For entry payments, this endpoint checks if the user already has
  * an entry for today. If they do, it returns an error BEFORE they can pay,
  * preventing accidental double payments.
- * 
+ *
  * Following Worldcoin best practices:
  * https://docs.world.org/mini-apps/commands/pay
- * 
- * Body:
- * - userId: User's World ID nullifier hash
- * - type: 'entry' | 'reveal'
- * - puzzleDate: The date of the puzzle (for entry)
- * - cellPosition?: { row: number, col: number } (for reveal)
- * 
- * Response:
- * - reference: Unique payment reference ID
- * - amount: Amount to pay (in human-readable format)
- * - tokenAmount: Amount in smallest unit (for MiniKit)
  */
 
-// Payment reference type
-type PaymentReference = {
+// Payment reference type (matches Supabase payment_references table)
+export type PaymentReference = {
   userId: string;
   type: 'entry' | 'reveal' | 'extra_life';
   puzzleDate: string;
@@ -36,54 +26,60 @@ type PaymentReference = {
   gameEntryId?: string;
   amount: string;
   tokenAmount: string;
-  createdAt: number;
   status: 'pending' | 'completed' | 'failed';
   transactionId?: string;
   username?: string;
   walletAddress?: string;
 };
 
-// BUG: In-memory storage for payment references loses data across serverless
-// invocations on Vercel. If /api/payment/initiate and /api/payment/confirm hit
-// different instances, the confirm endpoint can't find the reference, causing it
-// to reject a payment that already succeeded on-chain. This is the primary root
-// cause of the double-charge bug reported by users.
-// FIX: Move payment references to a persistent store (Supabase or Redis).
-// Use globalThis to persist across hot reloads in development
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const globalForPayments = globalThis as unknown as {
-  paymentReferences: Map<string, PaymentReference> | undefined;
-};
+/**
+ * Get a payment reference from Supabase
+ */
+export async function getPaymentReference(reference: string): Promise<PaymentReference | null> {
+  const supabase = getServerClient();
+  if (!supabase) return null;
 
-const paymentReferences = globalForPayments.paymentReferences ?? new Map<string, PaymentReference>();
+  const { data, error } = await supabase
+    .from('payment_references')
+    .select('*')
+    .eq('reference', reference)
+    .single();
 
-if (process.env.NODE_ENV === 'development') {
-  globalForPayments.paymentReferences = paymentReferences;
+  if (error || !data) return null;
+
+  return {
+    userId: data.user_id,
+    type: data.type as PaymentReference['type'],
+    puzzleDate: data.puzzle_date,
+    cellPosition: data.cell_row !== null && data.cell_col !== null
+      ? { row: data.cell_row, col: data.cell_col }
+      : undefined,
+    gameEntryId: data.game_entry_id ?? undefined,
+    amount: String(data.amount),
+    tokenAmount: data.token_amount,
+    status: data.status as PaymentReference['status'],
+    transactionId: data.transaction_id ?? undefined,
+  };
 }
 
-// Clean up old references (older than 1 hour)
-function cleanupOldReferences() {
-  const oneHourAgo = Date.now() - 60 * 60 * 1000;
-  for (const [ref, data] of paymentReferences.entries()) {
-    if (data.createdAt < oneHourAgo && data.status === 'pending') {
-      paymentReferences.delete(ref);
-    }
-  }
-}
-
-// Export for use in confirm route
-export function getPaymentReference(reference: string) {
-  return paymentReferences.get(reference);
-}
-
-export function updatePaymentReference(
-  reference: string, 
+/**
+ * Update a payment reference in Supabase
+ */
+export async function updatePaymentReference(
+  reference: string,
   updates: { status?: 'pending' | 'completed' | 'failed'; transactionId?: string }
 ) {
-  const existing = paymentReferences.get(reference);
-  if (existing) {
-    paymentReferences.set(reference, { ...existing, ...updates });
-  }
+  const supabase = getServerClient();
+  if (!supabase) return;
+
+  const updateData: Record<string, unknown> = { updated_at: new Date().toISOString() };
+  if (updates.status) updateData.status = updates.status;
+  if (updates.transactionId) updateData.transaction_id = updates.transactionId;
+
+  await supabase
+    .from('payment_references')
+    .update(updateData)
+    .eq('reference', reference);
 }
 
 // Entry fee: $1.00 USDC - using tokenToDecimals for proper conversion
@@ -144,10 +140,6 @@ export async function POST(request: NextRequest) {
 
     // IMPORTANT: For entry payments, check if user already has an entry for today
     // This prevents users from accidentally paying twice if they already started a game
-    // BUG: This check only catches duplicates when the previous confirm step succeeded
-    // (i.e., a game_entry was created). If the confirm step failed (e.g., due to the
-    // in-memory reference issue above), no entry exists, so this guard is bypassed and
-    // the user is allowed to pay again — resulting in a double charge.
     if (type === 'entry') {
       try {
         const user = await getOrCreateUser(userId);
@@ -174,16 +166,13 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Clean up old references periodically
-    cleanupOldReferences();
-
     // Generate a unique reference ID (UUID without dashes, as per Worldcoin docs)
     const reference = crypto.randomUUID().replace(/-/g, '');
 
     // Determine amount based on type
     let tokenAmount: string;
     let amount: string;
-    
+
     switch (type) {
       case 'entry':
         tokenAmount = ENTRY_FEE_USDC;
@@ -202,20 +191,37 @@ export async function POST(request: NextRequest) {
         amount = ENTRY_FEE_DISPLAY;
     }
 
-    // Store the reference for later verification
-    paymentReferences.set(reference, {
-      userId,
-      type,
-      puzzleDate,
-      cellPosition: type === 'reveal' ? cellPosition : undefined,
-      gameEntryId: type === 'extra_life' ? gameEntryId : undefined,
-      amount,
-      tokenAmount,
-      createdAt: Date.now(),
-      status: 'pending',
-      username,
-      walletAddress,
-    });
+    // Store the reference in Supabase for persistent cross-instance access
+    const supabase = getServerClient();
+    if (!supabase) {
+      return NextResponse.json(
+        { error: 'Database unavailable' },
+        { status: 503 }
+      );
+    }
+
+    const { error: insertError } = await supabase
+      .from('payment_references')
+      .insert({
+        reference,
+        user_id: userId,
+        type,
+        puzzle_date: puzzleDate,
+        cell_row: type === 'reveal' ? cellPosition?.row : null,
+        cell_col: type === 'reveal' ? cellPosition?.col : null,
+        game_entry_id: type === 'extra_life' ? gameEntryId : null,
+        amount: parseFloat(amount),
+        token_amount: tokenAmount,
+        status: 'pending',
+      });
+
+    if (insertError) {
+      console.error('[Payment] Failed to store payment reference:', insertError);
+      return NextResponse.json(
+        { error: 'Failed to initiate payment' },
+        { status: 500 }
+      );
+    }
 
     console.log(`[Payment] Initiated ${type} payment: reference=${reference}, userId=${userId.substring(0, 16)}...`);
 

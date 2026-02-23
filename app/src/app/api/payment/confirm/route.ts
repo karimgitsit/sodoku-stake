@@ -1,8 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getPaymentReference, updatePaymentReference } from '../initiate/route';
-import { getOrCreateUser, createGameEntry, generateVariantSeed, getUserEntry, recordReveal, getUserReferrer, recordReferralEarning, getTodayStats, TaxRate, addExtraLife, recordExtraLifePurchase } from '@/lib/db';
+import { getOrCreateUser, createGameEntry, generateVariantSeed, getUserEntry, recordReveal, getUserReferrer, recordReferralEarning, getTodayStats, TaxRate, addExtraLife, recordExtraLifePurchase, getOrCreateDailyPuzzle } from '@/lib/db';
 import { getTodayDate } from '@/lib/supabase';
-import { getOrCreateDailyPuzzle } from '@/lib/db';
 
 /**
  * POST /api/payment/confirm
@@ -75,53 +74,71 @@ async function verifyTransactionWithWorldcoin(transactionId: string): Promise<{
     };
   }
 
-  try {
-    const response = await fetch(
-      `https://developer.worldcoin.org/api/v2/minikit/transaction/${transactionId}?app_id=${APP_ID}`,
-      {
-        method: 'GET',
-        headers: {
-          'Authorization': `Bearer ${DEV_PORTAL_API_KEY}`,
-        },
+  // Retry with backoff to handle race condition where the transaction
+  // isn't indexed by Worldcoin yet (e.g., 404 right after on-chain success)
+  const MAX_RETRIES = 3;
+  const BACKOFF_MS = [1000, 2000, 4000];
+
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    try {
+      const response = await fetch(
+        `https://developer.worldcoin.org/api/v2/minikit/transaction/${transactionId}?app_id=${APP_ID}`,
+        {
+          method: 'GET',
+          headers: {
+            'Authorization': `Bearer ${DEV_PORTAL_API_KEY}`,
+          },
+        }
+      );
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.warn(`[Payment] Worldcoin API error (attempt ${attempt + 1}/${MAX_RETRIES + 1}):`, response.status, errorText);
+
+        // Retry on transient errors (404 = not indexed yet, 5xx = server error)
+        if (attempt < MAX_RETRIES && (response.status === 404 || response.status >= 500)) {
+          await new Promise(resolve => setTimeout(resolve, BACKOFF_MS[attempt]));
+          continue;
+        }
+
+        return {
+          verified: false,
+          error: `Verification failed: ${response.status}`,
+        };
       }
-    );
 
-    if (!response.ok) {
-      const errorText = await response.text();
-      console.error('[Payment] Worldcoin API error:', response.status, errorText);
+      const transaction = await response.json() as TransactionResponse;
+
+      // Only reject explicitly failed transactions — accept pending/mined
+      if (transaction.status === 'failed') {
+        return {
+          verified: false,
+          error: 'Transaction failed',
+        };
+      }
+
+      return {
+        verified: true,
+        transaction,
+      };
+
+    } catch (error) {
+      console.warn(`[Payment] Error verifying with Worldcoin (attempt ${attempt + 1}/${MAX_RETRIES + 1}):`, error);
+
+      if (attempt < MAX_RETRIES) {
+        await new Promise(resolve => setTimeout(resolve, BACKOFF_MS[attempt]));
+        continue;
+      }
+
       return {
         verified: false,
-        error: `Verification failed: ${response.status}`,
+        error: 'Failed to verify payment',
       };
     }
-
-    const transaction = await response.json() as TransactionResponse;
-
-    // Check transaction status
-    // We optimistically accept pending/mined, only reject failed
-    // BUG: If this API is called before the transaction is indexed (race condition),
-    // the fetch above may return a non-200 status (e.g., 404), causing the payment
-    // to be marked as failed even though it succeeded on-chain. Consider adding
-    // retry logic with backoff for the Worldcoin API verification call.
-    if (transaction.status === 'failed') {
-      return {
-        verified: false,
-        error: 'Transaction failed',
-      };
-    }
-
-    return {
-      verified: true,
-      transaction,
-    };
-
-  } catch (error) {
-    console.error('[Payment] Error verifying with Worldcoin:', error);
-    return {
-      verified: false,
-      error: 'Failed to verify payment',
-    };
   }
+
+  // Should never reach here, but TypeScript needs it
+  return { verified: false, error: 'Verification exhausted retries' };
 }
 
 export async function POST(request: NextRequest) {
@@ -144,8 +161,8 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Get the stored payment reference
-    const paymentRef = getPaymentReference(reference);
+    // Get the stored payment reference from Supabase
+    const paymentRef = await getPaymentReference(reference);
 
     if (!paymentRef) {
       return NextResponse.json(
@@ -167,7 +184,7 @@ export async function POST(request: NextRequest) {
     const verification = await verifyTransactionWithWorldcoin(transaction_id);
 
     if (!verification.verified) {
-      updatePaymentReference(reference, { status: 'failed' });
+      await updatePaymentReference(reference, { status: 'failed' });
       return NextResponse.json(
         { error: verification.error || 'Payment verification failed' },
         { status: 400 }
@@ -181,7 +198,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Mark payment as completed
-    updatePaymentReference(reference, { 
+    await updatePaymentReference(reference, {
       status: 'completed',
       transactionId: transaction_id,
     });
