@@ -32,6 +32,21 @@ export type PaymentReference = {
   walletAddress?: string;
 };
 
+// Row shape returned by Supabase for payment_references
+interface PaymentReferenceRow {
+  reference: string;
+  user_id: string;
+  type: string;
+  puzzle_date: string;
+  cell_row: number | null;
+  cell_col: number | null;
+  game_entry_id: string | null;
+  amount: number;
+  token_amount: string;
+  status: string;
+  transaction_id: string | null;
+}
+
 /**
  * Get a payment reference from Supabase
  */
@@ -47,18 +62,20 @@ export async function getPaymentReference(reference: string): Promise<PaymentRef
 
   if (error || !data) return null;
 
+  const row = data as unknown as PaymentReferenceRow;
+
   return {
-    userId: data.user_id,
-    type: data.type as PaymentReference['type'],
-    puzzleDate: data.puzzle_date,
-    cellPosition: data.cell_row !== null && data.cell_col !== null
-      ? { row: data.cell_row, col: data.cell_col }
+    userId: row.user_id,
+    type: row.type as PaymentReference['type'],
+    puzzleDate: row.puzzle_date,
+    cellPosition: row.cell_row !== null && row.cell_col !== null
+      ? { row: row.cell_row, col: row.cell_col }
       : undefined,
-    gameEntryId: data.game_entry_id ?? undefined,
-    amount: String(data.amount),
-    tokenAmount: data.token_amount,
-    status: data.status as PaymentReference['status'],
-    transactionId: data.transaction_id ?? undefined,
+    gameEntryId: row.game_entry_id ?? undefined,
+    amount: String(row.amount),
+    tokenAmount: row.token_amount,
+    status: row.status as PaymentReference['status'],
+    transactionId: row.transaction_id ?? undefined,
   };
 }
 
@@ -72,13 +89,14 @@ export async function updatePaymentReference(
   const supabase = getServerClient();
   if (!supabase) return;
 
-  const updateData: Record<string, unknown> = { updated_at: new Date().toISOString() };
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const updateData: Record<string, any> = { updated_at: new Date().toISOString() };
   if (updates.status) updateData.status = updates.status;
   if (updates.transactionId) updateData.transaction_id = updates.transactionId;
 
   await supabase
     .from('payment_references')
-    .update(updateData)
+    .update(updateData as any) // eslint-disable-line @typescript-eslint/no-explicit-any
     .eq('reference', reference);
 }
 
@@ -200,6 +218,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { error: insertError } = await supabase
       .from('payment_references')
       .insert({
@@ -213,7 +232,7 @@ export async function POST(request: NextRequest) {
         amount: parseFloat(amount),
         token_amount: tokenAmount,
         status: 'pending',
-      });
+      } as any);
 
     if (insertError) {
       console.error('[Payment] Failed to store payment reference:', insertError);
