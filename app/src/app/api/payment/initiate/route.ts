@@ -54,7 +54,8 @@ export async function getPaymentReference(reference: string): Promise<PaymentRef
   const supabase = getServerClient();
   if (!supabase) return null;
 
-  const { data, error } = await supabase
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { data, error } = await (supabase as any)
     .from('payment_references')
     .select('*')
     .eq('reference', reference)
@@ -62,7 +63,7 @@ export async function getPaymentReference(reference: string): Promise<PaymentRef
 
   if (error || !data) return null;
 
-  const row = data as unknown as PaymentReferenceRow;
+  const row = data as PaymentReferenceRow;
 
   return {
     userId: row.user_id,
@@ -89,14 +90,14 @@ export async function updatePaymentReference(
   const supabase = getServerClient();
   if (!supabase) return;
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const updateData: Record<string, any> = { updated_at: new Date().toISOString() };
+  const updateData: Record<string, unknown> = { updated_at: new Date().toISOString() };
   if (updates.status) updateData.status = updates.status;
   if (updates.transactionId) updateData.transaction_id = updates.transactionId;
 
-  await supabase
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  await (supabase as any)
     .from('payment_references')
-    .update(updateData as any) // eslint-disable-line @typescript-eslint/no-explicit-any
+    .update(updateData)
     .eq('reference', reference);
 }
 
@@ -219,7 +220,7 @@ export async function POST(request: NextRequest) {
     }
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { error: insertError } = await supabase
+    const { error: insertError } = await (supabase as any)
       .from('payment_references')
       .insert({
         reference,
@@ -232,7 +233,7 @@ export async function POST(request: NextRequest) {
         amount: parseFloat(amount),
         token_amount: tokenAmount,
         status: 'pending',
-      } as any);
+      });
 
     if (insertError) {
       console.error('[Payment] Failed to store payment reference:', insertError);
