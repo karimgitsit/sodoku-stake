@@ -99,6 +99,10 @@ async function verifyTransactionWithWorldcoin(transactionId: string): Promise<{
 
     // Check transaction status
     // We optimistically accept pending/mined, only reject failed
+    // BUG: If this API is called before the transaction is indexed (race condition),
+    // the fetch above may return a non-200 status (e.g., 404), causing the payment
+    // to be marked as failed even though it succeeded on-chain. Consider adding
+    // retry logic with backoff for the Worldcoin API verification call.
     if (transaction.status === 'failed') {
       return {
         verified: false,

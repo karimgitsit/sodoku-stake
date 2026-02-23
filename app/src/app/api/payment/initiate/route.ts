@@ -43,7 +43,12 @@ type PaymentReference = {
   walletAddress?: string;
 };
 
-// In-memory storage for payment references (use Redis/database in production)
+// BUG: In-memory storage for payment references loses data across serverless
+// invocations on Vercel. If /api/payment/initiate and /api/payment/confirm hit
+// different instances, the confirm endpoint can't find the reference, causing it
+// to reject a payment that already succeeded on-chain. This is the primary root
+// cause of the double-charge bug reported by users.
+// FIX: Move payment references to a persistent store (Supabase or Redis).
 // Use globalThis to persist across hot reloads in development
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const globalForPayments = globalThis as unknown as {
@@ -139,6 +144,10 @@ export async function POST(request: NextRequest) {
 
     // IMPORTANT: For entry payments, check if user already has an entry for today
     // This prevents users from accidentally paying twice if they already started a game
+    // BUG: This check only catches duplicates when the previous confirm step succeeded
+    // (i.e., a game_entry was created). If the confirm step failed (e.g., due to the
+    // in-memory reference issue above), no entry exists, so this guard is bypassed and
+    // the user is allowed to pay again — resulting in a double charge.
     if (type === 'entry') {
       try {
         const user = await getOrCreateUser(userId);

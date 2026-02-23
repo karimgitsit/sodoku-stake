@@ -405,6 +405,11 @@ export async function payEntryFee(
   console.log('[Payment] Initiated with reference:', initResult.reference);
 
   // Step 2: Send payment via MiniKit
+  // BUG: Once this step completes, money is irrevocably on-chain. If Step 3
+  // (confirmPayment) fails for ANY reason — serverless instance mismatch,
+  // Worldcoin API race condition, network error — the payment is lost with no
+  // recovery mechanism. The app resets to 'not_started', allowing the user to
+  // retry and be charged again. This needs idempotency/retry logic.
   const payResult = await sendPayment(
     initResult.reference!,
     initResult.tokenAmount!,
