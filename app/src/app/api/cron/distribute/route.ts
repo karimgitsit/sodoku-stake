@@ -16,6 +16,9 @@ import { NextRequest, NextResponse } from 'next/server';
 import { ethers } from 'ethers';
 import { createClient } from '@supabase/supabase-js';
 
+// Allow up to 5 minutes for sequential blockchain transactions
+export const maxDuration = 300;
+
 // =============================================================================
 // CONFIGURATION
 // =============================================================================
@@ -49,6 +52,7 @@ interface EntryWithUser {
   id: string;
   status: 'in_progress' | 'won' | 'lost';
   user_id: string;
+  prize_transaction_hash: string | null;
   users: {
     username: string | null;
     wallet_address: string | null;
@@ -179,11 +183,12 @@ async function distributePrizes(puzzleDate: string): Promise<DistributionResult>
   // Connect to Supabase
   const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
   
-  // Get all entries for the date
+  // Get all entries for the date in deterministic order
   const { data: entries, error } = await supabase
     .from('game_entries')
-    .select('id, status, user_id, users!inner(username, wallet_address, current_streak, has_streak_insurance, referred_by)')
-    .eq('puzzle_date', puzzleDate);
+    .select('id, status, user_id, prize_transaction_hash, users!inner(username, wallet_address, current_streak, has_streak_insurance, referred_by)')
+    .eq('puzzle_date', puzzleDate)
+    .order('id');
   
   if (error) {
     throw new Error(`Database error: ${error.message}`);
@@ -267,8 +272,15 @@ async function distributePrizes(puzzleDate: string): Promise<DistributionResult>
   
   // Pay winners
   for (const winner of winners) {
+    // Skip already-paid winners (idempotency for re-runs)
+    if (winner.prize_transaction_hash) {
+      console.log(`[Distribute] Skipping winner ${winner.id.substring(0, 8)}... - already paid (tx: ${winner.prize_transaction_hash.substring(0, 10)}...)`);
+      successfulPayouts++;
+      continue;
+    }
+
     const walletAddr = winner.users.wallet_address;
-    
+
     if (!walletAddr) {
       console.log(`[Distribute] Skipping winner ${winner.id} - no wallet`);
       failedPayouts++;
@@ -342,8 +354,15 @@ async function distributePrizes(puzzleDate: string): Promise<DistributionResult>
   
   // Pay insurance
   for (const loser of insuranceRecipients) {
+    // Skip already-paid insurance (idempotency for re-runs)
+    if (loser.prize_transaction_hash) {
+      console.log(`[Distribute] Skipping insurance ${loser.id.substring(0, 8)}... - already paid`);
+      insurancePayouts++;
+      continue;
+    }
+
     const walletAddr = loser.users.wallet_address;
-    
+
     if (!walletAddr) {
       failedPayouts++;
       continue;
