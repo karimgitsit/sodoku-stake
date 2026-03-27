@@ -544,12 +544,12 @@ export async function payExtraLife(
 
   console.log('[Payment] Initiated extra life with reference:', initResult.reference);
 
-  // Step 2: Send payment via MiniKit - Extra life adds to prize pool
+  // Step 2: Send payment via MiniKit - Extra life fees are direct revenue
   const payResult = await sendPayment(
     initResult.reference!,
     initResult.tokenAmount!,
-    `Sodoku Stake - Extra Life`
-    // No address specified = defaults to PLATFORM_WALLET (prize pool)
+    `Sodoku Stake - Extra Life`,
+    DEVELOPER_WALLET // Revenue goes directly to developer, not prize pool
   );
 
   if (!payResult.success) {

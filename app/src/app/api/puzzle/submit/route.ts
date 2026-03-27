@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getOrCreateDailyPuzzle, getOrCreateUser, getUserEntry, markEntryAsWon, getTodayStats, calculateTaxBreakdown, updateUser, getUserReferrer, getUserById } from '@/lib/db';
+import { getOrCreateDailyPuzzle, getOrCreateUser, getUserEntry, markEntryAsWon, getTodayStats, calculateTaxBreakdown, getUserReferrer, getUserById } from '@/lib/db';
 import { getTodayDate } from '@/lib/supabase';
 import { applyVariantMapping } from '@/lib/variant';
 import { 
@@ -93,22 +93,9 @@ export async function POST(request: NextRequest) {
       // Calculate tax breakdown with the updated winner count
       const taxBreakdown = calculateTaxBreakdown(stats.players, estimatedWinners);
       
-      // ===========================================================================
-      // UPDATE USER STATS (synchronous - must complete before response)
-      // ===========================================================================
-      // Increment total_wins immediately to ensure it's tracked
-      // NOTE: current_streak, longest_streak, last_played_date, and has_streak_insurance
-      // are handled by the database trigger on game entry creation
-      const newTotalWins = (user.total_wins || 0) + 1;
-      try {
-        await updateUser(user.id, {
-          total_wins: newTotalWins,
-        });
-        console.log(`[Submit] Updated total_wins for user ${user.id.substring(0, 8)}... to ${newTotalWins}`);
-      } catch (error) {
-        console.error(`[Submit] Failed to update total_wins for user ${user.id.substring(0, 8)}...:`, error);
-        // Don't fail the response - the win is still recorded in game_entries
-      }
+      // NOTE: total_wins and total_earnings are updated by the database trigger
+      // (update_winner_stats) which fires when game_entries.status changes to 'won'.
+      // No manual update needed here — the trigger handles it atomically.
       
       // ===========================================================================
       // ACHIEVEMENT NOTIFICATIONS (async - don't block response)

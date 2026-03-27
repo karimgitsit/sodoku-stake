@@ -218,7 +218,10 @@ async function distributePrizes(puzzleDate: string): Promise<DistributionResult>
   const winnerCount = winners.length;
   
   // Streak insurance - calculate obligation first (reserved from balance)
-  const insuranceRecipients = nonWinners.filter(e => e.users.has_streak_insurance === true);
+  // Only users who explicitly lost (status === 'lost') are eligible for insurance.
+  // Users who are still 'in_progress' (abandoned/timed out) should not receive insurance payouts.
+  const losers = typedEntries.filter(e => e.status === 'lost');
+  const insuranceRecipients = losers.filter(e => e.users.has_streak_insurance === true);
   const insurancePerPerson = ENTRY_FEE * 0.50;
   const totalInsuranceNeeded = insuranceRecipients.length * insurancePerPerson;
   
