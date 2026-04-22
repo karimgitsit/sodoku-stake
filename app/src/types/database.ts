@@ -324,6 +324,68 @@ export interface Database {
           created_at?: string;
         };
       };
+      payment_references: {
+        Row: {
+          id: string;
+          reference: string;
+          user_id: string;
+          type: 'entry' | 'reveal' | 'extra_life';
+          puzzle_date: string;
+          cell_row: number | null;
+          cell_col: number | null;
+          game_entry_id: string | null;
+          username: string | null;
+          wallet_address: string | null;
+          amount: number;
+          token_amount: string;
+          status: 'pending' | 'completed' | 'failed' | 'expired';
+          transaction_id: string | null;
+          error_message: string | null;
+          created_at: string;
+          updated_at: string;
+          expires_at: string;
+        };
+        Insert: {
+          id?: string;
+          reference: string;
+          user_id: string;
+          type: 'entry' | 'reveal' | 'extra_life';
+          puzzle_date: string;
+          cell_row?: number | null;
+          cell_col?: number | null;
+          game_entry_id?: string | null;
+          username?: string | null;
+          wallet_address?: string | null;
+          amount: number;
+          token_amount: string;
+          status?: 'pending' | 'completed' | 'failed' | 'expired';
+          transaction_id?: string | null;
+          error_message?: string | null;
+          created_at?: string;
+          updated_at?: string;
+          expires_at?: string;
+        };
+        Update: {
+          id?: string;
+          reference?: string;
+          user_id?: string;
+          type?: 'entry' | 'reveal' | 'extra_life';
+          puzzle_date?: string;
+          cell_row?: number | null;
+          cell_col?: number | null;
+          game_entry_id?: string | null;
+          username?: string | null;
+          wallet_address?: string | null;
+          amount?: number;
+          token_amount?: string;
+          status?: 'pending' | 'completed' | 'failed' | 'expired';
+          transaction_id?: string | null;
+          error_message?: string | null;
+          created_at?: string;
+          updated_at?: string;
+          expires_at?: string;
+        };
+      };
     };
     Views: {
       [_ in never]: never;
@@ -364,4 +426,8 @@ export type ReferralEarningUpdate = Database['public']['Tables']['referral_earni
 
 export type ExtraLifeTransaction = Database['public']['Tables']['extra_life_transactions']['Row'];
 export type ExtraLifeTransactionInsert = Database['public']['Tables']['extra_life_transactions']['Insert'];
+
+export type PaymentReferenceRow = Database['public']['Tables']['payment_references']['Row'];
+export type PaymentReferenceInsert = Database['public']['Tables']['payment_references']['Insert'];
+export type PaymentReferenceUpdate = Database['public']['Tables']['payment_references']['Update'];
 

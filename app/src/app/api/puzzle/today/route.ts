@@ -1,54 +1,42 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getOrCreateDailyPuzzle, getOrCreateUser, createGameEntry, getUserEntry, generateVariantSeed } from '@/lib/db';
+import { getOrCreateDailyPuzzle, getOrCreateUser, getUserEntry } from '@/lib/db';
 import { getTodayDate } from '@/lib/supabase';
 import { applyVariantMapping } from '@/lib/variant';
 
 /**
  * GET /api/puzzle/today
- * 
- * Returns the user's personalized puzzle variant for today.
- * 
+ *
+ * Returns the user's personalized puzzle variant for today if - and only if -
+ * they already have a paid entry for today. Entry creation only happens via
+ * /api/payment/confirm. Auto-creating an entry here would bypass payment and
+ * also collide with the "already has entry" guard in /api/payment/initiate,
+ * blocking legitimate payments.
+ *
  * Query params:
- * - userId: User's unique identifier (World ID nullifier hash)
- * 
- * Response:
- * - puzzle: 9x9 grid with user's variant (0 = empty cell)
- * - date: The puzzle date (YYYY-MM-DD)
- * - difficulty: Puzzle difficulty level
- * 
- * NOTE: Solution is NEVER returned to the client
+ * - userId: User's World ID nullifier hash
  */
 export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);
     const worldIdHash = searchParams.get('userId');
 
-    // Validate userId
     if (!worldIdHash) {
-      return NextResponse.json(
-        { error: 'Missing userId parameter' },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: 'Missing userId parameter' }, { status: 400 });
     }
 
     const today = getTodayDate();
 
-    // Get or create user
     const user = await getOrCreateUser(worldIdHash);
-    
-    // Get today's puzzle
-    const { puzzle, difficulty, puzzleId } = await getOrCreateDailyPuzzle(today);
-    
-    // Check if user already has an entry for today
-    let entry = await getUserEntry(user.id, today);
-    
+    const entry = await getUserEntry(user.id, today);
+
     if (!entry) {
-      // Create new entry
-      const variantSeed = generateVariantSeed(user.id, today);
-      entry = await createGameEntry(user.id, puzzleId, today, variantSeed);
+      return NextResponse.json(
+        { error: 'No paid entry for today. Pay the entry fee to start playing.', hasEntry: false },
+        { status: 404 }
+      );
     }
 
-    // Generate user's variant
+    const { puzzle, difficulty } = await getOrCreateDailyPuzzle(today);
     const variantPuzzle = applyVariantMapping(puzzle, user.id, today);
 
     return NextResponse.json({
@@ -58,13 +46,8 @@ export async function GET(request: NextRequest) {
       difficulty,
       entryId: entry.id,
     });
-
   } catch (error) {
     console.error('[API] Error fetching puzzle:', error);
-    return NextResponse.json(
-      { error: 'Failed to fetch puzzle' },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: 'Failed to fetch puzzle' }, { status: 500 });
   }
 }
-
