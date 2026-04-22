@@ -18,6 +18,9 @@ import type {
   GameEntryUpdate,
   ReferralEarning,
   ReferralEarningInsert,
+  PaymentReferenceRow,
+  PaymentReferenceInsert,
+  PaymentReferenceUpdate,
 } from '@/types/database';
 
 // =============================================================================
@@ -32,6 +35,7 @@ const globalForDb = globalThis as unknown as {
     users: Map<string, User>;
     entries: Map<string, GameEntry>;
     referralEarnings: Map<string, ReferralEarning>;
+    paymentReferences: Map<string, PaymentReferenceRow>;
   } | undefined;
 };
 
@@ -40,6 +44,7 @@ const memoryCache = globalForDb.memoryCache ?? {
   users: new Map<string, User>(),
   entries: new Map<string, GameEntry>(),
   referralEarnings: new Map<string, ReferralEarning>(),
+  paymentReferences: new Map<string, PaymentReferenceRow>(),
 };
 
 if (process.env.NODE_ENV === 'development') {
@@ -1414,6 +1419,158 @@ export async function getUserReferrer(userId: string): Promise<User | null> {
     .single();
   
   return referrer as User | null;
+}
+
+// =============================================================================
+// PAYMENT REFERENCE OPERATIONS
+// =============================================================================
+// References must be persisted (not stored in a Node-process Map), because
+// /api/payment/initiate and /api/payment/confirm may run on different
+// serverless instances. Losing the reference causes paid-but-no-entry bugs.
+
+export async function createPaymentReference(
+  row: PaymentReferenceInsert
+): Promise<PaymentReferenceRow> {
+  const supabase = getDb();
+
+  if (!supabase) {
+    const now = new Date().toISOString();
+    const stored: PaymentReferenceRow = {
+      id: `pref_${row.reference}`,
+      reference: row.reference,
+      user_id: row.user_id,
+      type: row.type,
+      puzzle_date: row.puzzle_date,
+      cell_row: row.cell_row ?? null,
+      cell_col: row.cell_col ?? null,
+      game_entry_id: row.game_entry_id ?? null,
+      username: row.username ?? null,
+      wallet_address: row.wallet_address ?? null,
+      amount: row.amount,
+      token_amount: row.token_amount,
+      status: row.status ?? 'pending',
+      transaction_id: row.transaction_id ?? null,
+      error_message: row.error_message ?? null,
+      created_at: now,
+      updated_at: now,
+      expires_at: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+    };
+    memoryCache.paymentReferences.set(stored.reference, stored);
+    return stored;
+  }
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const db = supabase as any;
+  const { data, error } = await db
+    .from('payment_references')
+    .insert(row)
+    .select()
+    .single();
+
+  if (error) {
+    console.error('[DB] Error creating payment reference:', error);
+    throw new Error('Failed to create payment reference');
+  }
+
+  return data as PaymentReferenceRow;
+}
+
+export async function getPaymentReferenceByRef(
+  reference: string
+): Promise<PaymentReferenceRow | null> {
+  const supabase = getDb();
+
+  if (!supabase) {
+    return memoryCache.paymentReferences.get(reference) ?? null;
+  }
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const db = supabase as any;
+  const { data } = await db
+    .from('payment_references')
+    .select('*')
+    .eq('reference', reference)
+    .maybeSingle();
+
+  return (data as PaymentReferenceRow | null) ?? null;
+}
+
+export async function getPaymentReferenceByTransactionId(
+  transactionId: string
+): Promise<PaymentReferenceRow | null> {
+  const supabase = getDb();
+
+  if (!supabase) {
+    for (const ref of memoryCache.paymentReferences.values()) {
+      if (ref.transaction_id === transactionId) return ref;
+    }
+    return null;
+  }
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const db = supabase as any;
+  const { data } = await db
+    .from('payment_references')
+    .select('*')
+    .eq('transaction_id', transactionId)
+    .maybeSingle();
+
+  return (data as PaymentReferenceRow | null) ?? null;
+}
+
+export async function updatePaymentReference(
+  reference: string,
+  updates: PaymentReferenceUpdate
+): Promise<PaymentReferenceRow | null> {
+  const supabase = getDb();
+  const patch = { ...updates, updated_at: new Date().toISOString() };
+
+  if (!supabase) {
+    const existing = memoryCache.paymentReferences.get(reference);
+    if (!existing) return null;
+    const next = { ...existing, ...patch } as PaymentReferenceRow;
+    memoryCache.paymentReferences.set(reference, next);
+    return next;
+  }
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const db = supabase as any;
+  const { data, error } = await db
+    .from('payment_references')
+    .update(patch)
+    .eq('reference', reference)
+    .select()
+    .maybeSingle();
+
+  if (error) {
+    console.error('[DB] Error updating payment reference:', error);
+    return null;
+  }
+
+  return (data as PaymentReferenceRow | null) ?? null;
+}
+
+export async function getEntryByTransactionHash(
+  transactionHash: string
+): Promise<GameEntry | null> {
+  const supabase = getDb();
+
+  if (!supabase) {
+    for (const entry of memoryCache.entries.values()) {
+      if (entry.transaction_hash === transactionHash) return entry;
+    }
+    return null;
+  }
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const db = supabase as any;
+  const { data } = await db
+    .from('game_entries')
+    .select('*')
+    .eq('transaction_hash', transactionHash)
+    .maybeSingle();
+
+  return (data as GameEntry | null) ?? null;
 }
 
 // =============================================================================
