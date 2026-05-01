@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import { Space_Grotesk } from "next/font/google";
 import "./globals.css";
 import { MiniKitProvider } from "@/components/MiniKitProvider";
+import { Analytics } from "@vercel/analytics/next";
 
 const spaceGrotesk = Space_Grotesk({
   variable: "--font-space-grotesk",
@@ -34,6 +35,7 @@ export default function RootLayout({
         <MiniKitProvider>
           {children}
         </MiniKitProvider>
+        <Analytics />
       </body>
     </html>
   );
