@@ -16,6 +16,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { ethers } from 'ethers';
 import { createClient } from '@supabase/supabase-js';
 
+export const maxDuration = 300;
+
 // =============================================================================
 // CONFIGURATION
 // =============================================================================
@@ -49,6 +51,8 @@ interface EntryWithUser {
   id: string;
   status: 'in_progress' | 'won' | 'lost';
   user_id: string;
+  prize_transaction_hash: string | null;
+  streak_insurance_applied: boolean;
   users: {
     username: string | null;
     wallet_address: string | null;
@@ -182,7 +186,7 @@ async function distributePrizes(puzzleDate: string): Promise<DistributionResult>
   // Get all entries for the date
   const { data: entries, error } = await supabase
     .from('game_entries')
-    .select('id, status, user_id, users!inner(username, wallet_address, current_streak, has_streak_insurance, referred_by)')
+    .select('id, status, user_id, prize_transaction_hash, streak_insurance_applied, users!inner(username, wallet_address, current_streak, has_streak_insurance, referred_by)')
     .eq('puzzle_date', puzzleDate);
   
   if (error) {
@@ -211,14 +215,20 @@ async function distributePrizes(puzzleDate: string): Promise<DistributionResult>
   
   console.log(`[Distribute] Prize pool balance: $${balanceUSDC.toFixed(2)} USDC`);
   
-  // Count winners (status === 'won')
+  // Count winners (status === 'won'). winnerCount is the total for prize math;
+  // winnersToPay is the subset still needing payout, so re-runs don't double-pay.
   const totalPlayers = typedEntries.length;
-  const winners = typedEntries.filter(e => e.status === 'won');
+  const wonEntries = typedEntries.filter(e => e.status === 'won');
   const nonWinners = typedEntries.filter(e => e.status !== 'won');
-  const winnerCount = winners.length;
-  
-  // Streak insurance - calculate obligation first (reserved from balance)
-  const insuranceRecipients = nonWinners.filter(e => e.users.has_streak_insurance === true);
+  const winnerCount = wonEntries.length;
+  const winnersToPay = wonEntries.filter(e => !e.prize_transaction_hash);
+  const alreadyPaidWinners = winnerCount - winnersToPay.length;
+
+  // Streak insurance - calculate obligation first (reserved from balance).
+  // Skip recipients already paid on a prior run.
+  const insuranceRecipients = nonWinners.filter(
+    e => e.users.has_streak_insurance === true && !e.streak_insurance_applied
+  );
   const insurancePerPerson = ENTRY_FEE * 0.50;
   const totalInsuranceNeeded = insuranceRecipients.length * insurancePerPerson;
   
@@ -256,17 +266,25 @@ async function distributePrizes(puzzleDate: string): Promise<DistributionResult>
   const prizePool = availableForWinners - platformFee;
   const payoutPerWinner = winnerCount > 0 ? prizePool / winnerCount : 0;
   
-  console.log(`[Distribute] Players: ${totalPlayers}, Winners: ${winnerCount}, Tax: ${platformFeePercent * 100}%`);
+  console.log(`[Distribute] Players: ${totalPlayers}, Winners: ${winnerCount} (${alreadyPaidWinners} already paid), Tax: ${platformFeePercent * 100}%`);
   console.log(`[Distribute] Balance: $${balanceUSDC.toFixed(2)}, Insurance reserve: $${insuranceReserve.toFixed(2)}, Available for winners: $${availableForWinners.toFixed(2)}`);
   console.log(`[Distribute] Prize per winner: $${payoutPerWinner.toFixed(2)}, Insurance per person: $${actualInsurancePayout.toFixed(2)}`)
-  
+
   // Distribute prizes
   let successfulPayouts = 0;
   let failedPayouts = 0;
   let insurancePayouts = 0;
-  
+
+  // Refuse to send dust — if the wallet was already swept on a prior run, the
+  // math collapses to ~0 and we'd fire useless or reverting transfers.
+  const canPayWinners = payoutPerWinner >= 0.01;
+  if (!canPayWinners && winnersToPay.length > 0) {
+    console.error(`[Distribute] ❌ payoutPerWinner=$${payoutPerWinner.toFixed(6)} below dust threshold; ${winnersToPay.length} winner(s) need manual recovery`);
+    failedPayouts += winnersToPay.length;
+  }
+
   // Pay winners
-  for (const winner of winners) {
+  for (const winner of canPayWinners ? winnersToPay : []) {
     const walletAddr = winner.users.wallet_address;
     
     if (!walletAddr) {
@@ -387,13 +405,17 @@ async function distributePrizes(puzzleDate: string): Promise<DistributionResult>
     }
   }
   
-  // Sweep remaining to developer wallet
+  // Sweep remaining to developer wallet. Skip if any payouts failed — the
+  // leftover balance still owes someone, and we shouldn't move it out of the
+  // payout wallet before that's resolved.
   console.log(`[Distribute] Checking remaining balance for sweep...`);
   const remainingBalance = await withRetry(() => usdc.balanceOf(wallet.address));
   const remainingUSDC = Number(ethers.formatUnits(remainingBalance, 6));
   console.log(`[Distribute] Remaining balance: $${remainingUSDC.toFixed(2)}`);
-  
-  if (remainingUSDC > 0.01) {
+
+  if (failedPayouts > 0) {
+    console.error(`[Distribute] ⛔ Skipping sweep — ${failedPayouts} payout(s) failed; leaving $${remainingUSDC.toFixed(2)} in payout wallet for recovery`);
+  } else if (remainingUSDC > 0.01) {
     try {
       console.log(`[Distribute] Sweeping to developer wallet: ${DEVELOPER_WALLET?.substring(0, 10)}...`);
       await withRetry(async () => {
@@ -461,11 +483,19 @@ export async function POST(request: NextRequest) {
     console.log(`[Distribute] Starting cron job for ${puzzleDate}`);
     
     const result = await distributePrizes(puzzleDate);
-    
+
     console.log('[Distribute] Complete:', JSON.stringify(result.stats));
-    
+
+    // Surface partial failures as a non-2xx so Vercel's failed-crons view fires.
+    if (result.payouts.failed > 0) {
+      return NextResponse.json(
+        { ...result, success: false, error: `${result.payouts.failed} payout(s) failed` },
+        { status: 500 }
+      );
+    }
+
     return NextResponse.json(result);
-    
+
   } catch (error) {
     console.error('[Distribute] Error:', error);
     return NextResponse.json(
